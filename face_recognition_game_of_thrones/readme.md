@@ -2,7 +2,7 @@
 Face detection of known characters on provided photo. The data set has a few "known" faces.
 The others - Unknown. 
 
-![Face recognition for Game of Thrones on image](https://raw.githubusercontent.com/username/projectname/branch/path/to/img.png)
+![Face recognition for Game of Thrones on image](https://github.com/evgen-ryzhkov/computer_vision/blob/master/face_recognition_game_of_thrones/prtn_screens/screenshot_1.jpg)
  
 Tags: Bing Image Search API (MS Azure Cognitive service), Deep learning, CNN, OpenCV, imutils, dlib, face_recognition.
 
