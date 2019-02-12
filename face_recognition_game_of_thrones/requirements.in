@@ -1,0 +1,7 @@
+pip-tools
+requests
+opencv-python
+cmake
+dlib
+face-recognition
+imutils
