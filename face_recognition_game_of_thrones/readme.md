@@ -13,5 +13,6 @@ Scripts:
 - face_detection_video_file.py - face recognition on provided video file
 
 Commands:
-- face detection: python -m scripts.face_detection --image [file_name_in data/test dir]
+- face detection image: python -m scripts.face_detection.py --image [file_name_in data/test dir]
+- face detection video: python -m scripts.face_detection_video_file.py --video [file_name_in data/test video dir]
  
