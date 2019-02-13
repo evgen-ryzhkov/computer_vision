@@ -4,12 +4,13 @@ The others - Unknown.
 
 ![Face recognition for Game of Thrones on image](https://github.com/evgen-ryzhkov/computer_vision/blob/master/face_recognition_game_of_thrones/prtn_screens/screenshot_1.jpg)
  
-Tags: Bing Image Search API (MS Azure Cognitive service), Deep learning, CNN, OpenCV, imutils, dlib, face_recognition.
+Tags: Data mining, Bing Image Search API (MS Azure Cognitive service), OpenCV, imutils, dlib, face_recognition.
 
 Scripts:
 - dataset.py - creating train data set of character faces that are listed in init of the class
 - known_faces.py - creating base of known faces as a dictionary of pairs of face encoding (128-d vector) and character name
 - face_detection.py - face recognition on provided photo
+- face_detection_video_file.py - face recognition on provided video file
 
 Commands:
 - face detection: python -m scripts.face_detection --image [file_name_in data/test dir]

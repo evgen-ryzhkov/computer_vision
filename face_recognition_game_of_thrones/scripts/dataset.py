@@ -9,6 +9,7 @@ import shutil
 class Dataset:
 
     def __init__(self):
+        # todo - replace the key into independent congig file that will be gitignored
         self.subscription_key = 'bfed7294c78b419cb6a46987c125e25b'
         self.search_url = 'https://api.cognitive.microsoft.com/bing/v7.0/images/search'
 
