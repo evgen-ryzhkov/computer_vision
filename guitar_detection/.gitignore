@@ -1,0 +1,7 @@
+/.idea
+/venv
+/__pycache_
+/data
+/output_video
+/config/access.py
+
