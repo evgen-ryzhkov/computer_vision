@@ -7,14 +7,27 @@ import numpy as np
 
 class ObjectDetector:
 
-    def detect_on_video(self):
+    def detect_object(self):
         user_arguments = self._get_command_line_arguments()
         file_name = user_arguments['file']
+
+        # define what's type of input file
+        point_idx = file_name.find('.')
+        ext_len = len(file_name) - point_idx -1
+        file_ext = file_name[-ext_len:]
+
+        if file_ext == 'jpg' or file_ext == 'jpeg' or file_ext == 'png':
+            self._detect_on_image(file_name)
+        elif file_ext == 'mp4':
+            self._detect_on_video(file_name)
+
+    def _detect_on_video(self, file_name):
+
         video_file_path = config.TEST_DIR + file_name
 
         # Define the codec and create VideoWriter object
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(config.OUTPUT_VIDEO_FILE_PATH, fourcc, 1.0,
+        out_video = cv2.VideoWriter(config.OUTPUT_VIDEO_FILE_PATH, fourcc, 20.0,
                               (640, 360))  # hardcode! must be the same as input video
 
         net = None
@@ -32,6 +45,7 @@ class ObjectDetector:
             print('[ERROR] File {} not found in data/test_video'.format(file_name))
 
         while video_stream.isOpened():
+            object_classes = open(config.OBJECT_CLASSES).read().strip().split('\n')
             ret, frame = video_stream.read()
             original_frame_width = frame.shape[1]
             original_frame_height = frame.shape[0]
@@ -85,8 +99,13 @@ class ObjectDetector:
                 box_y = box[1]
                 box_w = box[2]
                 box_h = box[3]
-                self._draw_predict(frame, class_ids[i], confidences[i], box_x, box_y, box_w, box_h)
+                class_id = class_ids[i]
+                label = object_classes[class_id]
+                frame = self._draw_predict(frame, label, confidences[i], box_x, box_y, box_w, box_h)
 
+            # cv2.imshow('Resulted video', frame)
+            # saving video
+            out_video.write(frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
@@ -95,10 +114,8 @@ class ObjectDetector:
         # out.release()
         cv2.destroyAllWindows()
 
-    def detect_on_image(self):
+    def _detect_on_image(self, file_name):
         object_classes = open(config.OBJECT_CLASSES).read().strip().split('\n')
-        user_arguments = self._get_command_line_arguments()
-        file_name = user_arguments['file']
         img_file_path = config.TEST_DIR + file_name
 
         # load our input image and grab its spatial dimensions
@@ -156,6 +173,7 @@ class ObjectDetector:
 
         # ensure at least one detection exists
         if len(indices) > 0:
+            frame = None
             for i in indices:
                 i = i[0]
                 box = boxes[i]
@@ -165,7 +183,10 @@ class ObjectDetector:
                 box_h = box[3]
                 class_id = class_ids[i]
                 label = object_classes[class_id]
-                self._draw_predict(image, label, confidences[i], box_x, box_y, box_w, box_h)
+                frame = self._draw_predict(image, label, confidences[i], box_x, box_y, box_w, box_h)
+
+            cv2.imshow('Resulted video', frame)
+            cv2.waitKey(0)
 
     @staticmethod
     def _get_command_line_arguments():
@@ -190,11 +211,9 @@ class ObjectDetector:
         cv2.rectangle(frame, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), color, 2)
         cv2.putText(frame, txt, (top_left_x - 10, top_left_y + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-        cv2.imshow('Resulted video', frame)
-        cv2.waitKey(0)
+        return frame
 
 
 # ----------------------------------------------------
 od = ObjectDetector()
-# od.detect_on_video()
-od.detect_on_image()
+od.detect_object()

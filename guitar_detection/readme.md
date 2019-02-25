@@ -7,12 +7,22 @@ The others - Unknown.
 Tags: Data mining, Bing Image Search API (MS Azure Cognitive service), OpenCV, imutils, dlib, face_recognition.
 
 Scripts:
-- dataset.py - creating train data set of character faces that are listed in init of the class
-- known_faces.py - creating base of known faces as a dictionary of pairs of face encoding (128-d vector) and character name
-- face_detection.py - face recognition on provided photo
-- face_detection_video_file.py - face recognition on provided video file
+- dataset.py - creating train and test data set in according to search term
 
 Commands:
-- face detection image: python -m scripts.face_detection.py --image [file_name_in data/test dir]
-- face detection video: python -m scripts.face_detection_video_file.py --video [file_name_in data/test video dir]
+- download images: python -m scripts.dataset.py --action create_train_dataset
+- split full dataset by train and test:  python -m scripts.dataset.py --action create_train_test_txt
  
+ How to use:
+ - choose search term for the object, set in dataset.py init
+ - load images and del non relevant
+ - copy images to other directory (need remove from download directory because
+   the directory cleaning before new search images)
+- label images in yolo format (with labelImg for example)
+- preparing training configuration files
+    - create train.txt and test.txt - splited lists of images for traning darknet model
+    - copy this files to darknet custom config 
+    - modify yolo config for your dataset
+- download pretrained convolutional weights
+- start training with darknet
+

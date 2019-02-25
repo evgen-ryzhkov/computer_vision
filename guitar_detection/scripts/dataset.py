@@ -7,6 +7,8 @@ import os
 import shutil
 import argparse
 from imutils import paths
+import random
+
 
 
 class Dataset:
@@ -16,8 +18,8 @@ class Dataset:
         self.search_url = 'https://api.cognitive.microsoft.com/bing/v7.0/images/search'
 
         self.train_dataset_path = config.TRAIN_IMG_DIR
-        self.search_term = ['guitar']
-        self.images_amount_for_class = 100
+        self.search_term = ['kiss concert'] # for diversity use different term 'guitar', 'iron maiden concert' and so on
+        self.images_amount_for_class = 300
 
     def run(self):
         try:
@@ -86,10 +88,11 @@ class Dataset:
 
         file_name_pattern = 'img_'
         file_name_ext = '.jpg'
+        start_idx = 400 # for increasing amount of dataset. take last number of image from current dataset
 
         for idx, img in enumerate(url_images):
             file = requests.get(img, timeout=30)
-            file_name = file_name_pattern + str(idx) + file_name_ext
+            file_name = file_name_pattern + str(start_idx + idx) + file_name_ext
             file_path = dir_path + file_name
             print('[INFO] saving ' + file_name)
 
@@ -100,20 +103,22 @@ class Dataset:
 
     @staticmethod
     def get_first_n_image_urls(search_results, n_images):
-        image_urls = [img["thumbnailUrl"] for img in search_results[:n_images]]
+        image_urls = [img["contentUrl"] for img in search_results[:n_images]] # using big image as on small can't see guitars
         return image_urls
 
     @staticmethod
     def _create_train_test_txt():
         print('[INFO] Creating train and test.txt...')
 
-        labeled_image_paths = list(paths.list_images(config.LABELED_TRAIN_IMG_DIR))
-        n_full_dataset = len(labeled_image_paths)
-        test_size = 0.1
+        list_labeled_image_paths = list(paths.list_images(config.LABELED_TRAIN_IMG_DIR))
+        n_full_dataset = len(list_labeled_image_paths)
+        random.Random(4).shuffle(list_labeled_image_paths) # shuffle list for better model learning and simplier split data by train / test
+
+        test_size = 0.2
         n_test_size = round(n_full_dataset * test_size)
         n_train_size = n_full_dataset - n_test_size
-        train_images_paths = labeled_image_paths[:n_train_size]
-        test_images_paths = labeled_image_paths[-n_test_size:]
+        train_images_paths = list_labeled_image_paths[:n_train_size]
+        test_images_paths = list_labeled_image_paths[-n_test_size:]
 
         # creating and saving txt files for darknet training
         # we need full path to images in order to darknet could fild them
