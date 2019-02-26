@@ -1,7 +1,7 @@
 # Custom object detection with OpenCV and YOLO
 Guitars detection on image and video files. 
 
-![Guitar detection](https://github.com/evgen-ryzhkov/computer_vision/blob/master/guitar_detection/prtn_screen/custom_object_detection.jpg)
+![Guitar detection](https://github.com/evgen-ryzhkov/computer_vision/blob/master/guitar_detection/prnt_screen/custom_object_detection.jpg)
  
 Tags: Data mining, Bing Image Search API (MS Azure Cognitive service), OpenCV, YOLO, Darknet.
 
