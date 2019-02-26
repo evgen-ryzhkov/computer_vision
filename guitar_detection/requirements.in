@@ -2,8 +2,3 @@ pip-tools
 requests
 imutils
 opencv-python
-
-cmake
-dlib
-face-recognition
-

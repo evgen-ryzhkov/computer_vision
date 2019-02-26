@@ -10,7 +10,6 @@ from imutils import paths
 import random
 
 
-
 class Dataset:
 
     def __init__(self):
@@ -50,7 +49,7 @@ class Dataset:
         url_images = gd_o.get_first_n_image_urls(search_results, n_images=self.images_amount_for_class)
         self._parse_and_save_images(url_images, self.train_dataset_path)
 
-        print('[OK] Datasets has been saved successfully.')
+        print('[OK] Dataset has been saved successfully.')
 
     @staticmethod
     def _clear_directory(path):

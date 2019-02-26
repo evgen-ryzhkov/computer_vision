@@ -1,17 +1,18 @@
-# Face recognition for Game of Thrones  
-Face detection of known characters on provided photo. The data set has a few "known" faces.
-The others - Unknown. 
+# Custom object detection with OpenCV and YOLO
+Guitars detection on image and video files. 
 
-![Face recognition for Game of Thrones on image](https://github.com/evgen-ryzhkov/computer_vision/blob/master/face_recognition_game_of_thrones/prtn_screens/screenshot_1.jpg)
+![Guitar detection](https://github.com/evgen-ryzhkov/computer_vision/blob/master/guitar_detection/prtn_screen/custom_object_detection.jpg)
  
-Tags: Data mining, Bing Image Search API (MS Azure Cognitive service), OpenCV, imutils, dlib, face_recognition.
+Tags: Data mining, Bing Image Search API (MS Azure Cognitive service), OpenCV, YOLO, Darknet.
 
 Scripts:
 - dataset.py - creating train and test data set in according to search term
+- object_detector.py - guitar detection on image/video file
 
 Commands:
-- download images: python -m scripts.dataset.py --action create_train_dataset
+- download images for training: python -m scripts.dataset.py --action create_train_dataset
 - split full dataset by train and test:  python -m scripts.dataset.py --action create_train_test_txt
+- detect on image: python -m scripts.oject_detector.py --file [image/video file in data/test directory]
  
  How to use:
  - choose search term for the object, set in dataset.py init
@@ -25,4 +26,6 @@ Commands:
     - modify yolo config for your dataset
 - download pretrained convolutional weights
 - start training with darknet
+- copy resulted yolo.cfg and yolo.weights to project's model directory
+- run object detector 
 
