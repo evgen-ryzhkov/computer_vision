@@ -8,4 +8,7 @@ Projects:
 - guitar_detection
     - Custom object detection with OpenCV and YOLO
     - Tags: Data mining, Bing Image Search API (MS Azure Cognitive service), OpenCV, YOLO, Darknet.
+- simple_mask_rcnn
+    - Simple Mask R-CNN object detection
+    - Tags: Mask R-CNN, OpenCV, Inception v2.
 
