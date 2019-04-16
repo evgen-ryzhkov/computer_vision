@@ -1,0 +1,40 @@
+# Data files and directories common in repo root
+assets/
+datasets/
+images/
+logs/
+*.h5
+samples/
+results/
+temp/
+test/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PyCharm
+.idea/
+
+# virtualenv
+venv/
+
+# personal account settings
+config/access.py
+
