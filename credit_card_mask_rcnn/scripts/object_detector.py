@@ -205,7 +205,7 @@ def train(model):
     print("Training network heads")
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
-                epochs=50,
+                epochs=35,
                 layers='heads')
 
 
@@ -296,10 +296,11 @@ def get_credit_card_roi(model, img_file=None):
 
         # showing box roi
         roi_box = first_credit_card_instance['roi']
-        credit_card_bbox = image[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
 
-        cv2.imshow("Box roi", credit_card_bbox)
-        cv2.waitKey(0)
+        # look at bbox for debugging
+        # credit_card_bbox = image[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
+        # cv2.imshow("Box roi", credit_card_bbox)
+        # cv2.waitKey(0)
 
         # showing masked roi
         mask = first_credit_card_instance['mask']
@@ -313,8 +314,19 @@ def get_credit_card_roi(model, img_file=None):
         # getting masked roi
         credit_card_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
 
-        cv2.imshow("Masked roi", credit_card_instance)
+        # look for debugging
+        # cv2.imshow("Masked roi", credit_card_instance)
+        # cv2.waitKey(0)
+
+        instance_with_backround_around = add_background_around_instance_roi(credit_card_instance)
+
+        bird_eye_view_instance = get_birds_eye_view_roi(instance_with_backround_around)
+
+        cv2.imshow("Debugging", bird_eye_view_instance)
         cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+
 
         return credit_card_instance
 
@@ -322,11 +334,46 @@ def get_credit_card_roi(model, img_file=None):
         print('Credit cards were not found.')
 
 
-def rotate_roi(model, img_file=None):
-    image = cv2.imread(TEST_IMAGES_DIR + img_file)
+def add_background_around_instance_roi(instance_img):
+    # for good detecting external contour
+    # it's required to be empty space around the object
+    # so we create a little bit bigger image from instance with filled background around
 
-    ratio = image.shape[0] / 300.0
-    image = imutils.resize(image, height=300)
+    # Create black blank image
+    instance_img_height = instance_img.shape[0]
+    instance_img_width = instance_img.shape[1]
+
+    instance_with_background_around_height = instance_img_height + 10
+    instance_with_background_around_width = instance_img_width + 10
+    instance_with_background_around = np.zeros((instance_with_background_around_height, instance_with_background_around_width, 3), np.uint8)
+    instance_with_background_around[:] = (0, 0, 0) # black background
+
+    instance_with_background_around[4:instance_img_height+4, 4:instance_img_width+4] = instance_img
+
+
+    # cv2.imshow("Instance with background around", instance_with_background_around)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    return instance_with_background_around
+
+
+def get_birds_eye_view_roi(instance_image):
+    # image = cv2.imread(TEST_IMAGES_DIR + img_file)
+
+    # for increase work speed
+    # maybe it will need to turn on
+    # ratio = image.shape[0] / 300.0
+    # image = imutils.resize(image, height=300)
+
+    biggest_contour = get_biggest_contour(instance_image)
+    vertices = get_vertices(biggest_contour)
+
+    birds_eye_view_image = get_birds_eye_view_image(instance_image, vertices)
+    return birds_eye_view_image
+
+
+def get_biggest_contour(image):
     # convert the image to grayscale, blur it, and find edges
     # in the image
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -342,32 +389,18 @@ def rotate_roi(model, img_file=None):
     # cv2.imshow("The biggest contour", image)
     # cv2.waitKey(0)
 
-    # approximate the contour
-    # peri = cv2.arcLength(biggest_contour, True)
-    # approx = cv2.approxPolyDP(biggest_contour, 0.1 * peri, True)
-    # points = approx.reshape(4, 2)
+    return biggest_contour
 
-    # getting vertices
-    rect = cv2.minAreaRect(biggest_contour)
+
+def get_vertices(contour):
+    rect = cv2.minAreaRect(contour)
     box = cv2.boxPoints(rect)
     box = np.int0(box)
-
-    four_point_transform(image, box)
-
-    # print(approx.shape)
-    # # x, y, w, h = cv2.boundingRect(approx)
-    #
-    # points_for_transform = get_points_for_bird_view_transform(biggest_contour)
-    # for point in points:
-    #     cv2.drawMarker(image, point, (0, 255, 0), cv2.MARKER_CROSS, markerSize=20, thickness=2, line_type=cv2.LINE_AA)
-    # cv2.imshow("The vertices", image)
-    # cv2.waitKey(0)
+    return box
 
 
-def four_point_transform(image, four_points):
-    print(four_points)
+def get_birds_eye_view_image(image, four_points):
     # define order of corners
-
     # the top-left point will have the smallest sum, whereas
     # the bottom-right point will have the largest sum
     s = four_points.sum(axis=1)
@@ -420,31 +453,6 @@ def four_point_transform(image, four_points):
     # cv2.waitKey(0)
     return birds_eye_view_image
 
-
-def get_points_for_bird_view_transform(contour):
-    # initialzie a list of coordinates that will be ordered
-    # such that the first entry in the list is the top-left,
-    # the second entry is the top-right, the third is the
-    # bottom-right, and the fourth is the bottom-left
-    # print(contour.shape)
-    # contour_points = contour.reshape(4, 2)
-    points = np.zeros((4, 2), dtype="float32")
-
-    # the top-left point will have the smallest sum, whereas
-    # the bottom-right point will have the largest sum
-    s = contour.sum(axis=1)
-    points[0] = contour[np.argmin(s)]
-    points[2] = contour[np.argmax(s)]
-
-    # now, compute the difference between the points, the
-    # top-right point will have the smallest difference,
-    # whereas the bottom-left will have the largest difference
-    diff = np.diff(contour, axis=1)
-    points[1] = contour[np.argmin(diff)]
-    points[3] = contour[np.argmax(diff)]
-
-    # return the ordered coordinates
-    return points
 
 ############################################################
 #  Training
@@ -514,7 +522,7 @@ if __name__ == '__main__':
                                   model_dir=args.logs)
 
     # Select weights file to load
-    if (args.command == "get_roi") or (args.command == "rotate"):
+    if args.command == "get_roi":
         weights_path = LAST_MODEL_WEIGHTS_PATH
     elif args.weights.lower() == "coco":
         weights_path = COCO_WEIGHTS_PATH
@@ -551,9 +559,6 @@ if __name__ == '__main__':
                                 video_path=args.video)
     elif args.command == "get_roi":
         get_credit_card_roi(model, img_file=args.image)
-
-    elif args.command == "rotate":
-        rotate_roi(model, img_file=args.image)
 
     else:
         print("'{}' is not recognized. "
