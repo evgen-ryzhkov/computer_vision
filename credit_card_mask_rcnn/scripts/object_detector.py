@@ -209,79 +209,19 @@ def train(model):
                 layers='heads')
 
 
-def color_splash(image, mask):
-    """Apply color splash effect.
-    image: RGB image [height, width, 3]
-    mask: instance segmentation mask [height, width, instance count]
-    Returns result image.
-    """
-    # Make a grayscale copy of the image. The grayscale copy still
-    # has 3 RGB channels, though.
-    gray = skimage.color.gray2rgb(skimage.color.rgb2gray(image)) * 255
-    # Copy color pixels from the original color image where mask is set
-    if mask.shape[-1] > 0:
-        # We're treating all instances as one, so collapse the mask into one layer
-        mask = (np.sum(mask, -1, keepdims=True) >= 1)
-        splash = np.where(mask, image, gray).astype(np.uint8)
-    else:
-        splash = gray.astype(np.uint8)
-    return splash
+def read_card(model, img_file=None):
+    input_image = cv2.imread(TEST_IMAGES_DIR + img_file)
+
+    card_image = _get_object_instance(model, input_image)
+    prepared_card_image = _prepare_card_for_text_reading(card_image)
+
+    cv2.imshow("Debugging", prepared_card_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    # card_number = _get_card_number(prepared_card)
 
 
-def detect_and_color_splash(model, image_path=None, video_path=None):
-    assert image_path or video_path
-
-    # Image or video?
-    if image_path:
-        # Run model detection and generate the color splash effect
-        print("Running on {}".format(args.image))
-        # Read image
-        image = skimage.io.imread(args.image)
-        # Detect objects
-        r = model.detect([image], verbose=1)[0]
-        # Color splash
-        splash = color_splash(image, r['masks'])
-        # Save output
-        file_name = "splash_{:%Y%m%dT%H%M%S}.png".format(datetime.datetime.now())
-        skimage.io.imsave(file_name, splash)
-    elif video_path:
-        import cv2
-        # Video capture
-        vcapture = cv2.VideoCapture(video_path)
-        width = int(vcapture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(vcapture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = vcapture.get(cv2.CAP_PROP_FPS)
-
-        # Define codec and create video writer
-        file_name = "splash_{:%Y%m%dT%H%M%S}.avi".format(datetime.datetime.now())
-        vwriter = cv2.VideoWriter(file_name,
-                                  cv2.VideoWriter_fourcc(*'MJPG'),
-                                  fps, (width, height))
-
-        count = 0
-        success = True
-        while success:
-            print("frame: ", count)
-            # Read next image
-            success, image = vcapture.read()
-            if success:
-                # OpenCV returns images as BGR, convert to RGB
-                image = image[..., ::-1]
-                # Detect objects
-                r = model.detect([image], verbose=0)[0]
-                # Color splash
-                splash = color_splash(image, r['masks'])
-                # RGB -> BGR to save image to video
-                splash = splash[..., ::-1]
-                # Add image to video writer
-                vwriter.write(splash)
-                count += 1
-        vwriter.release()
-    print("Saved to ", file_name)
-
-
-def get_credit_card_roi(model, img_file=None):
-    image = cv2.imread(TEST_IMAGES_DIR + img_file)
+def _get_object_instance(model, image):
     # Detect objects
     r = model.detect([image], verbose=1)[0]
     found_objects_count = r['class_ids'].shape[-1]
@@ -313,28 +253,67 @@ def get_credit_card_roi(model, img_file=None):
 
         # getting masked roi
         credit_card_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
-
-        # look for debugging
-        # cv2.imshow("Masked roi", credit_card_instance)
-        # cv2.waitKey(0)
-
-        instance_with_backround_around = add_background_around_instance_roi(credit_card_instance)
-
-        bird_eye_view_instance = get_birds_eye_view_roi(instance_with_backround_around)
-
-        cv2.imshow("Debugging", bird_eye_view_instance)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-
-
-        return credit_card_instance
+        return  credit_card_instance
 
     else:
         print('Credit cards were not found.')
 
 
-def add_background_around_instance_roi(instance_img):
+def _prepare_card_for_text_reading(card_instance):
+    instance_with_backround_around = _add_background_around_instance_roi(card_instance)
+    bird_eye_view_instance = _get_birds_eye_view_roi(instance_with_backround_around)
+    return bird_eye_view_instance
+
+
+
+
+# def get_credit_card_roi(model, img_file=None):
+#
+#     # Detect objects
+#     r = model.detect([image], verbose=1)[0]
+#     found_objects_count = r['class_ids'].shape[-1]
+#
+#     if found_objects_count > 0:
+#         # For more simple debugging will work with the first instance only
+#         first_credit_card_instance = {
+#             'roi': r['rois'][0],
+#             'scores': r['scores'][0],
+#             'mask': r['masks'][:, :, 0]
+#         }
+#
+#         # showing box roi
+#         roi_box = first_credit_card_instance['roi']
+#
+#         # look at bbox for debugging
+#         # credit_card_bbox = image[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
+#         # cv2.imshow("Box roi", credit_card_bbox)
+#         # cv2.waitKey(0)
+#
+#         # showing masked roi
+#         mask = first_credit_card_instance['mask']
+#
+#         # maybe it could be done easier
+#         # convert the mask from a boolean to an integer mask with
+#         # to values: 0 or 255, then apply the mask
+#         vis_mask = (mask * 255).astype("uint8")
+#         masked_img = cv2.bitwise_and(image, image, mask=vis_mask)
+#
+#         # getting masked roi
+#         credit_card_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
+#
+#         # look for debugging
+#         # cv2.imshow("Masked roi", credit_card_instance)
+#         # cv2.waitKey(0)
+#
+#         instance_with_backround_around = add_background_around_instance_roi(credit_card_instance)
+#         bird_eye_view_instance = get_birds_eye_view_roi(instance_with_backround_around)
+#         return bird_eye_view_instance
+#
+#     else:
+#         print('Credit cards were not found.')
+
+
+def _add_background_around_instance_roi(instance_img):
     # for good detecting external contour
     # it's required to be empty space around the object
     # so we create a little bit bigger image from instance with filled background around
@@ -358,22 +337,24 @@ def add_background_around_instance_roi(instance_img):
     return instance_with_background_around
 
 
-def get_birds_eye_view_roi(instance_image):
-    # image = cv2.imread(TEST_IMAGES_DIR + img_file)
+def _get_birds_eye_view_roi(instance_image):
+    # algorithm:
+    #   1. find the biggest contour
+    #   2. find 4 vertices
+    #   3. perspective transform image by 4 vertices
 
     # for increase work speed
     # maybe it will need to turn on
     # ratio = image.shape[0] / 300.0
     # image = imutils.resize(image, height=300)
 
-    biggest_contour = get_biggest_contour(instance_image)
-    vertices = get_vertices(biggest_contour)
-
-    birds_eye_view_image = get_birds_eye_view_image(instance_image, vertices)
+    biggest_contour = _get_biggest_contour(instance_image)
+    vertices = _get_vertices(biggest_contour)
+    birds_eye_view_image = _get_birds_eye_view_image(instance_image, vertices)
     return birds_eye_view_image
 
 
-def get_biggest_contour(image):
+def _get_biggest_contour(image):
     # convert the image to grayscale, blur it, and find edges
     # in the image
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -392,14 +373,14 @@ def get_biggest_contour(image):
     return biggest_contour
 
 
-def get_vertices(contour):
+def _get_vertices(contour):
     rect = cv2.minAreaRect(contour)
     box = cv2.boxPoints(rect)
     box = np.int0(box)
     return box
 
 
-def get_birds_eye_view_image(image, four_points):
+def _get_birds_eye_view_image(image, four_points):
     # define order of corners
     # the top-left point will have the smallest sum, whereas
     # the bottom-right point will have the largest sum
@@ -488,9 +469,6 @@ if __name__ == '__main__':
     # Validate arguments
     if args.command == "train":
         assert args.dataset, "Argument --dataset is required for training"
-    elif args.command == "splash":
-        assert args.image or args.video, \
-            "Provide --image or --video to apply color splash"
     elif args.command == "get_roi":
         assert args.image, \
             "Provide --image or --video to apply color splash"
@@ -522,7 +500,7 @@ if __name__ == '__main__':
                                   model_dir=args.logs)
 
     # Select weights file to load
-    if args.command == "get_roi":
+    if args.command == "read_card":
         weights_path = LAST_MODEL_WEIGHTS_PATH
     elif args.weights.lower() == "coco":
         weights_path = COCO_WEIGHTS_PATH
@@ -540,7 +518,7 @@ if __name__ == '__main__':
 
     # Load weights
     print("Loading weights ", weights_path)
-    if (args.command == "get_roi") or (args.command == "rotate"):
+    if args.command == "read_card":
         model.load_weights(weights_path, by_name=True)
     elif args.weights.lower() == "coco":
         # Exclude the last layers because they require a matching
@@ -554,12 +532,8 @@ if __name__ == '__main__':
     # Train or evaluate
     if args.command == "train":
         train(model)
-    elif args.command == "splash":
-        detect_and_color_splash(model, image_path=args.image,
-                                video_path=args.video)
-    elif args.command == "get_roi":
-        get_credit_card_roi(model, img_file=args.image)
-
+    elif args.command == "read_card":
+        read_card(model, img_file=args.image)
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'splash'".format(args.command))
