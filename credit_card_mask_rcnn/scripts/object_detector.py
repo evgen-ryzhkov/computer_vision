@@ -38,11 +38,15 @@ import os
 import sys
 import json
 import datetime
+import time
 import numpy as np
 import skimage.draw
 
 import cv2
+import pytesseract
 import imutils
+from imutils.object_detection import non_max_suppression
+
 
 
 # # Import Mask RCNN
@@ -58,6 +62,7 @@ sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
 from mrcnn import model as modellib, utils
 
+# todo - remove settings to main config
 # Path to trained weights file
 COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mrcnn/mask_rcnn_coco.h5")
 
@@ -71,6 +76,7 @@ TEST_IMAGES_DIR = os.path.join(ROOT_DIR, "images/test/")
 # Path to last trained weights
 LAST_MODEL_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mrcnn/mask_rcnn_credit_card_last.h5")
 
+EAST_MODEL_PATH = os.path.join(ROOT_DIR, "east_text_detector/frozen_east_text_detection.pb")
 
 ############################################################
 #  Configurations
@@ -215,10 +221,13 @@ def read_card(model, img_file=None):
     card_image = _get_object_instance(model, input_image)
     prepared_card_image = _prepare_card_for_text_reading(card_image)
 
-    cv2.imshow("Debugging", prepared_card_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    # card_number = _get_card_number(prepared_card)
+    # cv2.imshow("Debugging", prepared_card_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    print('Card reading...')
+    card_number = _get_card_number(prepared_card_image)
+    print(card_number)
 
 
 def _get_object_instance(model, image):
@@ -263,54 +272,6 @@ def _prepare_card_for_text_reading(card_instance):
     instance_with_backround_around = _add_background_around_instance_roi(card_instance)
     bird_eye_view_instance = _get_birds_eye_view_roi(instance_with_backround_around)
     return bird_eye_view_instance
-
-
-
-
-# def get_credit_card_roi(model, img_file=None):
-#
-#     # Detect objects
-#     r = model.detect([image], verbose=1)[0]
-#     found_objects_count = r['class_ids'].shape[-1]
-#
-#     if found_objects_count > 0:
-#         # For more simple debugging will work with the first instance only
-#         first_credit_card_instance = {
-#             'roi': r['rois'][0],
-#             'scores': r['scores'][0],
-#             'mask': r['masks'][:, :, 0]
-#         }
-#
-#         # showing box roi
-#         roi_box = first_credit_card_instance['roi']
-#
-#         # look at bbox for debugging
-#         # credit_card_bbox = image[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
-#         # cv2.imshow("Box roi", credit_card_bbox)
-#         # cv2.waitKey(0)
-#
-#         # showing masked roi
-#         mask = first_credit_card_instance['mask']
-#
-#         # maybe it could be done easier
-#         # convert the mask from a boolean to an integer mask with
-#         # to values: 0 or 255, then apply the mask
-#         vis_mask = (mask * 255).astype("uint8")
-#         masked_img = cv2.bitwise_and(image, image, mask=vis_mask)
-#
-#         # getting masked roi
-#         credit_card_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
-#
-#         # look for debugging
-#         # cv2.imshow("Masked roi", credit_card_instance)
-#         # cv2.waitKey(0)
-#
-#         instance_with_backround_around = add_background_around_instance_roi(credit_card_instance)
-#         bird_eye_view_instance = get_birds_eye_view_roi(instance_with_backround_around)
-#         return bird_eye_view_instance
-#
-#     else:
-#         print('Credit cards were not found.')
 
 
 def _add_background_around_instance_roi(instance_img):
@@ -433,6 +394,74 @@ def _get_birds_eye_view_image(image, four_points):
     # cv2.imshow("The vertices", birds_eye_view_image)
     # cv2.waitKey(0)
     return birds_eye_view_image
+
+
+def _get_card_number(image):
+    # getting card number roi
+
+    # The EAST model requires that your input image dimensions be multiples of 32
+    # just choose our image size = 320x320
+    east_image_height = 320
+    east_image_width = 320
+    image_for_east = np.zeros((east_image_height, east_image_width, 3), np.uint8)
+
+    # save original image and its size
+    orig_image = image.copy()
+    (input_image_height, input_image_width) = image.shape[:2]
+
+    # for good text reading, it need to resize image to size east model required with keeping aspect ration
+    input_image_ratio = input_image_width / input_image_height
+    resized_image_width = east_image_width
+    resized_image_height = int(input_image_height / input_image_ratio)
+    resized_image = cv2.resize(image, (resized_image_width, resized_image_height), interpolation=cv2.INTER_AREA)
+
+    # insert resized_image to image for east model
+    image_for_east[0:resized_image_height, 0:resized_image_width] = resized_image
+
+    # debugging
+    # cv2.imshow("Debugging", image_for_east)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    # define the two output layer names for the EAST detector model that
+    # we are interested -- the first is the output probabilities and the
+    # second can be used to derive the bounding box coordinates of text
+    layerNames = [
+        "feature_fusion/Conv_7/Sigmoid",
+        "feature_fusion/concat_3"]
+
+    # load the pre-trained EAST text detector
+    print("[INFO] loading EAST text detector...")
+    net = cv2.dnn.readNet(EAST_MODEL_PATH)
+
+    # construct a blob from the image and then perform a forward pass of
+    # the model to obtain the two output layer sets
+    blob = cv2.dnn.blobFromImage(image_for_east, 1.0, (east_image_width, east_image_height),
+                                 (123.68, 116.78, 103.94), swapRB=True, crop=False)
+    start = time.time()
+    net.setInput(blob)
+    (scores, geometry) = net.forward(layerNames)
+    end = time.time()
+
+    # show timing information on text prediction
+    print("[INFO] text detection took {:.6f} seconds".format(end - start))
+
+    # set the new width and height and then determine the ratio in change
+    # for both the width and height
+    # ratio_width = input_image_width / float(east_image_width)
+    # ratio_height = input_image_height / float(east_image_height)
+
+    # resize the image and grab the new image dimensions
+    resized_image = cv2.resize(image, (resized_image_width, resized_image_height), interpolation = cv2.INTER_AREA)
+    # (H, W) = image.shape[:2]
+
+
+
+
+
+    text = 'test'
+    return text
+
 
 
 ############################################################
