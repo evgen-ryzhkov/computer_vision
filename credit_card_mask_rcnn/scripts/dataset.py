@@ -1,3 +1,19 @@
+"""
+Work with datasets
+
+Written by Evgeniy Ryzhkov
+
+------------------------------------------------------------
+
+Usage:
+
+    # Split datasets (datasets/filtered dir) into train and val datasets
+    python - m scripts.dataset --action=split_train_val_images
+
+
+"""
+
+
 import http.client, urllib.parse, json
 import config.main as config
 import config.access as config_access

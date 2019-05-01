@@ -27,7 +27,7 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
     python3 balloon.py splash --weights=last --video=<URL or path to file>
 
     # Debugging
-    python object_detector.py get_roi --image=<image file name in images/test directory>
+    python object_detector.py read_card --image=<image file name in images/test directory>
 
 """
 
@@ -76,7 +76,8 @@ TEST_IMAGES_DIR = os.path.join(ROOT_DIR, "images/test/")
 # Path to last trained weights
 LAST_MODEL_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mrcnn/mask_rcnn_credit_card_last.h5")
 
-EAST_MODEL_PATH = os.path.join(ROOT_DIR, "east_text_detector/frozen_east_text_detection.pb")
+EAST_MODEL_PATH = os.path.join(ROOT_DIR, "east_text_detector/frozen_custom_east_text_detection.pb")
+EAST_MIN_CONFIDENCE = 0.5
 
 ############################################################
 #  Configurations
@@ -147,7 +148,11 @@ class CreditCardDataset(utils.Dataset):
             # Unfortunately, VIA doesn't include it in JSON, so we must read
             # the image. This is only managable since the dataset is tiny.
             image_path = os.path.join(dataset_dir, a['filename'])
-            image = skimage.io.imread(image_path)
+            # image = skimage.io.imread(image_path) # error with reading png
+            # except:
+            #     print('[ERROR] Troubles with file ', a['filename'])
+            brg_image = cv2.imread(image_path)
+            image = cv2.cvtColor(brg_image, cv2.COLOR_BGR2RGB)
             height, width = image.shape[:2]
 
             self.add_image(
@@ -211,21 +216,28 @@ def train(model):
     print("Training network heads")
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
-                epochs=35,
+                epochs=50,
                 layers='heads')
 
 
 def read_card(model, img_file=None):
     input_image = cv2.imread(TEST_IMAGES_DIR + img_file)
-
     card_image = _get_object_instance(model, input_image)
+
+    # cv2.imshow("Card image", card_image)
+    # cv2.waitKey(0)
+
     prepared_card_image = _prepare_card_for_text_reading(card_image)
+    # prepared_card_image = input_image
 
     # cv2.imshow("Debugging", prepared_card_image)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
-    print('Card reading...')
+    # todo - remove after debugging
+    # prepared_card_image = input_image
+
+    print('[INFO] Card reading...')
     card_number = _get_card_number(prepared_card_image)
     print(card_number)
 
@@ -260,24 +272,27 @@ def _get_object_instance(model, image):
         vis_mask = (mask * 255).astype("uint8")
         masked_img = cv2.bitwise_and(image, image, mask=vis_mask)
 
+        # cv2.imshow("Masked img", masked_img)
+        # cv2.waitKey(0)
+
         # getting masked roi
         credit_card_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
-        return  credit_card_instance
+        return credit_card_instance
 
     else:
         print('Credit cards were not found.')
 
 
 def _prepare_card_for_text_reading(card_instance):
-    instance_with_backround_around = _add_background_around_instance_roi(card_instance)
-    bird_eye_view_instance = _get_birds_eye_view_roi(instance_with_backround_around)
+    instance_with_background_around = _add_background_around_instance_roi(card_instance)
+    bird_eye_view_instance = _get_birds_eye_view_roi(instance_with_background_around)
     return bird_eye_view_instance
 
 
 def _add_background_around_instance_roi(instance_img):
     # for good detecting external contour
     # it's required to be empty space around the object
-    # so we create a little bit bigger image from instance with filled background around
+    # so we create a little bit bigger image for instance with filled background around
 
     # Create black blank image
     instance_img_height = instance_img.shape[0]
@@ -286,10 +301,22 @@ def _add_background_around_instance_roi(instance_img):
     instance_with_background_around_height = instance_img_height + 10
     instance_with_background_around_width = instance_img_width + 10
     instance_with_background_around = np.zeros((instance_with_background_around_height, instance_with_background_around_width, 3), np.uint8)
-    instance_with_background_around[:] = (0, 0, 0) # black background
 
+    # for better detection card contour, background has to be contrast to card color
+    # if card light - background dark, else backgound light
+    gray = cv2.cvtColor(instance_img, cv2.COLOR_BGR2GRAY)
+    brightness = np.mean(gray)
+    print('[DEBUGGING] Brightness = ', brightness)
+    # brightness threshold was chosen experimentally
+    # todo - it needs to debug here
+    brightness_threshold = 90
+    if brightness < brightness_threshold:
+        background_color = (0, 0, 0)
+    else:
+        background_color = (0, 0, 0)
+
+    instance_with_background_around[:] = background_color
     instance_with_background_around[4:instance_img_height+4, 4:instance_img_width+4] = instance_img
-
 
     # cv2.imshow("Instance with background around", instance_with_background_around)
     # cv2.waitKey(0)
@@ -300,35 +327,48 @@ def _add_background_around_instance_roi(instance_img):
 
 def _get_birds_eye_view_roi(instance_image):
     # algorithm:
+    #   0. resize image to smaller size for better perfomance
     #   1. find the biggest contour
     #   2. find 4 vertices
     #   3. perspective transform image by 4 vertices
 
     # for increase work speed
     # maybe it will need to turn on
-    # ratio = image.shape[0] / 300.0
-    # image = imutils.resize(image, height=300)
+    ratio = instance_image.shape[0] / 300.0
+    resized_image = imutils.resize(instance_image, height=960)
 
-    biggest_contour = _get_biggest_contour(instance_image)
+    biggest_contour = _get_biggest_contour(resized_image)
     vertices = _get_vertices(biggest_contour)
-    birds_eye_view_image = _get_birds_eye_view_image(instance_image, vertices)
+    birds_eye_view_image = _get_birds_eye_view_image(resized_image, vertices)
     return birds_eye_view_image
 
 
 def _get_biggest_contour(image):
     # convert the image to grayscale, blur it, and find edges
     # in the image
+    # image = cv2.imread(TEST_IMAGES_DIR + 'img_5.jpg')
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 11, 17, 17)
     edged = cv2.Canny(gray, 30, 200)
 
+    # closed operation in order to contours was closed
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
+
     # find the biggest contours in the edged image
-    card_contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    card_contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     biggest_contour = max(card_contours, key=cv2.contourArea)
 
     # debugging if the contour is right
-    # cv2.drawContours(image, [biggest_contour], -1, (0, 255, 0), 3)
-    # cv2.imshow("The biggest contour", image)
+    # img_copy_1 = image.copy()
+    # cv2.drawContours(img_copy_1, card_contours, -1, (0, 255, 0), 3)
+    # cv2.imshow("All contours", img_copy_1)
+    # cv2.waitKey(0)
+    #
+    # img_copy_2 = image.copy()
+    # cv2.drawContours(img_copy_2, [biggest_contour], -1, (0, 255, 0), 3)
+    # cv2.imshow("The biggest contour", img_copy_2)
     # cv2.waitKey(0)
 
     return biggest_contour
@@ -342,6 +382,9 @@ def _get_vertices(contour):
 
 
 def _get_birds_eye_view_image(image, four_points):
+    # for this prototype it required that card will be in album view
+    # there is no processing for portrait view
+
     # define order of corners
     # the top-left point will have the smallest sum, whereas
     # the bottom-right point will have the largest sum
@@ -358,10 +401,10 @@ def _get_birds_eye_view_image(image, four_points):
 
     # look for debugging
     # point colors - BGR format
-    # cv2.circle(image, (top_left[0], top_left[1]), 5, (255, 0, 0), -1)           # blue
-    # cv2.circle(image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)   # green
-    # cv2.circle(image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)         # red
-    # cv2.circle(image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)   # yellow
+    cv2.circle(image, (top_left[0], top_left[1]), 5, (255, 0, 0), -1)           # blue
+    cv2.circle(image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)   # green
+    cv2.circle(image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)         # red
+    cv2.circle(image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)   # yellow
     # cv2.imshow("The vertices", image)
     # cv2.waitKey(0)
 
@@ -401,8 +444,8 @@ def _get_card_number(image):
 
     # The EAST model requires that your input image dimensions be multiples of 32
     # just choose our image size = 320x320
-    east_image_height = 320
-    east_image_width = 320
+    east_image_height = 960
+    east_image_width = 960
     image_for_east = np.zeros((east_image_height, east_image_width, 3), np.uint8)
 
     # save original image and its size
@@ -415,23 +458,30 @@ def _get_card_number(image):
     resized_image_height = int(input_image_height / input_image_ratio)
     resized_image = cv2.resize(image, (resized_image_width, resized_image_height), interpolation=cv2.INTER_AREA)
 
+    ratio_h = input_image_height / float(resized_image_height)
+    ratio_w = input_image_width / float(resized_image_width)
+
     # insert resized_image to image for east model
     image_for_east[0:resized_image_height, 0:resized_image_width] = resized_image
 
+    # image_for_east = cv2.cvtColor(image_for_east, cv2.COLOR_BGR2GRAY)
     # debugging
     # cv2.imshow("Debugging", image_for_east)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
+
+
+
     # define the two output layer names for the EAST detector model that
     # we are interested -- the first is the output probabilities and the
     # second can be used to derive the bounding box coordinates of text
-    layerNames = [
+    output_layers = [
         "feature_fusion/Conv_7/Sigmoid",
         "feature_fusion/concat_3"]
 
     # load the pre-trained EAST text detector
-    print("[INFO] loading EAST text detector...")
+    print("-- [INFO] loading EAST text detector...")
     net = cv2.dnn.readNet(EAST_MODEL_PATH)
 
     # construct a blob from the image and then perform a forward pass of
@@ -440,28 +490,102 @@ def _get_card_number(image):
                                  (123.68, 116.78, 103.94), swapRB=True, crop=False)
     start = time.time()
     net.setInput(blob)
-    (scores, geometry) = net.forward(layerNames)
+    (scores, geometry) = net.forward(output_layers)
     end = time.time()
 
     # show timing information on text prediction
-    print("[INFO] text detection took {:.6f} seconds".format(end - start))
+    print("-- [INFO] text detection took {:.6f} seconds".format(end - start))
 
-    # set the new width and height and then determine the ratio in change
-    # for both the width and height
-    # ratio_width = input_image_width / float(east_image_width)
-    # ratio_height = input_image_height / float(east_image_height)
+    # decode the predictions, then  apply non-maxima suppression to
+    # suppress weak, overlapping bounding boxes
+    (rects, confidences) = _decode_east_text_predictions(scores, geometry)
+    boxes = non_max_suppression(np.array(rects), probs=confidences)
 
-    # resize the image and grab the new image dimensions
-    resized_image = cv2.resize(image, (resized_image_width, resized_image_height), interpolation = cv2.INTER_AREA)
-    # (H, W) = image.shape[:2]
+    text_roi_arr = []
+    # because boundery has not very good accuracy
+    # adding padding for better text capturing
+    roi_padding_val = 10
 
+    for box in boxes:
+        top_left_x = int(box[0] * ratio_w)
+        top_left_y = int(box[1] * ratio_h)
+        bottom_right_x = int(box[2] * ratio_w)
+        bottom_right_y = int(box[3] * ratio_h)
 
+        top_left_x = top_left_x - roi_padding_val
+        top_left_y = top_left_y - roi_padding_val
+        bottom_right_x = bottom_right_x + roi_padding_val
+        bottom_right_y = bottom_right_y + roi_padding_val
 
+        text_roi_arr.append((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
 
+        border_color = (0, 0, 255)
+        cv2.rectangle(orig_image, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), border_color, 2)
+
+    cv2.imshow("Debugging text rois", orig_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     text = 'test'
     return text
 
+
+def _decode_east_text_predictions(scores, geometry):
+    # grab the number of rows and columns from the scores volume, then
+    # initialize our set of bounding box rectangles and corresponding
+    # confidence scores
+    (numRows, numCols) = scores.shape[2:4]
+    rects = []
+    confidences = []
+
+    # loop over the number of rows
+    for y in range(0, numRows):
+        # extract the scores (probabilities), followed by the
+        # geometrical data used to derive potential bounding box
+        # coordinates that surround text
+        scoresData = scores[0, 0, y]
+        xData0 = geometry[0, 0, y]
+        xData1 = geometry[0, 1, y]
+        xData2 = geometry[0, 2, y]
+        xData3 = geometry[0, 3, y]
+        anglesData = geometry[0, 4, y]
+
+        # loop over the number of columns
+        for x in range(0, numCols):
+            # if our score does not have sufficient probability,
+            # ignore it
+            if scoresData[x] < EAST_MIN_CONFIDENCE:
+                continue
+
+            # compute the offset factor as our resulting feature
+            # maps will be 4x smaller than the input image
+            (offsetX, offsetY) = (x * 4.0, y * 4.0)
+
+            # extract the rotation angle for the prediction and
+            # then compute the sin and cosine
+            angle = anglesData[x]
+            cos = np.cos(angle)
+            sin = np.sin(angle)
+
+            # use the geometry volume to derive the width and height
+            # of the bounding box
+            h = xData0[x] + xData2[x]
+            w = xData1[x] + xData3[x]
+
+            # compute both the starting and ending (x, y)-coordinates
+            # for the text prediction bounding box
+            endX = int(offsetX + (cos * xData1[x]) + (sin * xData2[x]))
+            endY = int(offsetY - (sin * xData1[x]) + (cos * xData2[x]))
+            startX = int(endX - w)
+            startY = int(endY - h)
+
+            # add the bounding box coordinates and probability score
+            # to our respective lists
+            rects.append((startX, startY, endX, endY))
+            confidences.append(scoresData[x])
+
+    # return a tuple of the bounding boxes and associated confidences
+    return (rects, confidences)
 
 
 ############################################################
