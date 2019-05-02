@@ -20,12 +20,6 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
     # Train a new model starting from ImageNet weights
     python object_detector.py train --dataset=/path/to/balloon/dataset --weights=imagenet
 
-    # Apply color splash to an image
-    python object_detector.py splash --weights=/path/to/weights/file.h5 --image=<URL or path to file>
-
-    # Apply color splash to video using the last weights you trained
-    python3 balloon.py splash --weights=last --video=<URL or path to file>
-
     # Debugging
     python object_detector.py read_card --image=<image file name in images/test directory>
 
@@ -440,6 +434,25 @@ def _get_birds_eye_view_image(image, four_points):
 
 
 def _get_card_number(image):
+
+    image_for_east, east_image_width, east_image_height, ratio_h, ratio_w = _prepare_image_for_east_detector(image)
+    all_text_boxes_on_card = _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w)
+
+    # debugging
+    border_color = (0, 0, 255)
+    for box in all_text_boxes_on_card:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+    cv2.imshow("Debugging text rois", image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # card_number_text_boxes = _get_card_number_boxes(all_text_boxes_on_card)
+
+    text = 'test'
+    return text
+
+
+def _prepare_image_for_east_detector(image):
     # getting card number roi
 
     # The EAST model requires that your input image dimensions be multiples of 32
@@ -448,11 +461,8 @@ def _get_card_number(image):
     east_image_width = 960
     image_for_east = np.zeros((east_image_height, east_image_width, 3), np.uint8)
 
-    # save original image and its size
-    orig_image = image.copy()
-    (input_image_height, input_image_width) = image.shape[:2]
-
     # for good text reading, it need to resize image to size east model required with keeping aspect ration
+    (input_image_height, input_image_width) = image.shape[:2]
     input_image_ratio = input_image_width / input_image_height
     resized_image_width = east_image_width
     resized_image_height = int(input_image_height / input_image_ratio)
@@ -464,70 +474,7 @@ def _get_card_number(image):
     # insert resized_image to image for east model
     image_for_east[0:resized_image_height, 0:resized_image_width] = resized_image
 
-    # image_for_east = cv2.cvtColor(image_for_east, cv2.COLOR_BGR2GRAY)
-    # debugging
-    # cv2.imshow("Debugging", image_for_east)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
-
-
-
-    # define the two output layer names for the EAST detector model that
-    # we are interested -- the first is the output probabilities and the
-    # second can be used to derive the bounding box coordinates of text
-    output_layers = [
-        "feature_fusion/Conv_7/Sigmoid",
-        "feature_fusion/concat_3"]
-
-    # load the pre-trained EAST text detector
-    print("-- [INFO] loading EAST text detector...")
-    net = cv2.dnn.readNet(EAST_MODEL_PATH)
-
-    # construct a blob from the image and then perform a forward pass of
-    # the model to obtain the two output layer sets
-    blob = cv2.dnn.blobFromImage(image_for_east, 1.0, (east_image_width, east_image_height),
-                                 (123.68, 116.78, 103.94), swapRB=True, crop=False)
-    start = time.time()
-    net.setInput(blob)
-    (scores, geometry) = net.forward(output_layers)
-    end = time.time()
-
-    # show timing information on text prediction
-    print("-- [INFO] text detection took {:.6f} seconds".format(end - start))
-
-    # decode the predictions, then  apply non-maxima suppression to
-    # suppress weak, overlapping bounding boxes
-    (rects, confidences) = _decode_east_text_predictions(scores, geometry)
-    boxes = non_max_suppression(np.array(rects), probs=confidences)
-
-    text_roi_arr = []
-    # because boundery has not very good accuracy
-    # adding padding for better text capturing
-    roi_padding_val = 10
-
-    for box in boxes:
-        top_left_x = int(box[0] * ratio_w)
-        top_left_y = int(box[1] * ratio_h)
-        bottom_right_x = int(box[2] * ratio_w)
-        bottom_right_y = int(box[3] * ratio_h)
-
-        top_left_x = top_left_x - roi_padding_val
-        top_left_y = top_left_y - roi_padding_val
-        bottom_right_x = bottom_right_x + roi_padding_val
-        bottom_right_y = bottom_right_y + roi_padding_val
-
-        text_roi_arr.append((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
-
-        border_color = (0, 0, 255)
-        cv2.rectangle(orig_image, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), border_color, 2)
-
-    cv2.imshow("Debugging text rois", orig_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    text = 'test'
-    return text
+    return image_for_east, east_image_width, east_image_height, ratio_h, ratio_w
 
 
 def _decode_east_text_predictions(scores, geometry):
@@ -586,6 +533,68 @@ def _decode_east_text_predictions(scores, geometry):
 
     # return a tuple of the bounding boxes and associated confidences
     return (rects, confidences)
+
+
+def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w):
+
+    # define the two output layer names for the EAST detector model that
+    # we are interested -- the first is the output probabilities and the
+    # second can be used to derive the bounding box coordinates of text
+    output_layers = [
+        "feature_fusion/Conv_7/Sigmoid",
+        "feature_fusion/concat_3"]
+
+    # load the pre-trained EAST text detector
+    print("-- [INFO] loading EAST text detector...")
+    net = cv2.dnn.readNet(EAST_MODEL_PATH)
+
+    # construct a blob from the image and then perform a forward pass of
+    # the model to obtain the two output layer sets
+    blob = cv2.dnn.blobFromImage(image_for_east, 1.0, (east_image_width, east_image_height),
+                                 (123.68, 116.78, 103.94), swapRB=True, crop=False)
+    start = time.time()
+    net.setInput(blob)
+    (scores, geometry) = net.forward(output_layers)
+    end = time.time()
+
+    # show timing information on text prediction
+    print("-- [INFO] text detection took {:.6f} seconds".format(end - start))
+
+    # decode the predictions, then  apply non-maxima suppression to
+    # suppress weak, overlapping bounding boxes
+    (rects, confidences) = _decode_east_text_predictions(scores, geometry)
+    boxes = non_max_suppression(np.array(rects), probs=confidences)
+
+    text_roi_arr = []
+    # because boundary has not very good accuracy
+    # adding padding for better text capturing
+    roi_padding_val = 5
+
+    for box in boxes:
+        top_left_x = int(box[0] * ratio_w)
+        top_left_y = int(box[1] * ratio_h)
+        bottom_right_x = int(box[2] * ratio_w)
+        bottom_right_y = int(box[3] * ratio_h)
+
+        top_left_x = top_left_x - roi_padding_val
+        top_left_y = top_left_y - roi_padding_val
+        bottom_right_x = bottom_right_x + roi_padding_val
+        bottom_right_y = bottom_right_y + roi_padding_val
+
+        text_roi_arr.append((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
+
+    return text_roi_arr
+
+
+def _get_card_number_boxes(boxes_list):
+
+    # card number boxes are:
+    # -- four boxes
+    # -- y_top_left_corner are approximately equal (in range some small delta)
+    # -- order boxes depends from x_top_left_corners
+
+    y_top_left_cornet_delta = 10
+    # for box in boxes_list:
 
 
 ############################################################
