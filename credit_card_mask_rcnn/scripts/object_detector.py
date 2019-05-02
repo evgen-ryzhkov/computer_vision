@@ -446,7 +446,17 @@ def _get_card_number(image):
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-    # card_number_text_boxes = _get_card_number_boxes(all_text_boxes_on_card)
+    card_number_text_boxes = _get_card_number_boxes(all_text_boxes_on_card)
+    for box in card_number_text_boxes:
+        # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+        roi = image[box[1]:box[3], box[0]:box[2]]
+        cv2.imshow("Debugging text rois", roi)
+        cv2.waitKey(0)
+
+    cv2.destroyAllWindows()
+
+
+
 
     text = 'test'
     return text
@@ -591,10 +601,50 @@ def _get_card_number_boxes(boxes_list):
     # card number boxes are:
     # -- four boxes
     # -- y_top_left_corner are approximately equal (in range some small delta)
+    # -- width and height are approximately equal
     # -- order boxes depends from x_top_left_corners
 
-    y_top_left_cornet_delta = 10
-    # for box in boxes_list:
+    card_number_boxes = None
+    y_top_left_corner_delta = 20
+    wh_delta = 25
+
+    # find 4 boxes with equal top left corners
+    for idx, box in enumerate(boxes_list):
+        top_left_corner = box[1]
+        box_w =  box[2] - box[0]
+        box_h = box[3] - box[1]
+
+        card_number_boxes = []
+        card_number_boxes.append(box)
+        boxes_count = 1
+
+        boxes_list_without_current_box = boxes_list
+        del boxes_list_without_current_box[idx]
+
+        for box_2 in boxes_list_without_current_box:
+            top_left_corner_2 = box_2[1]
+            box_w_2 = box_2[2] - box_2[0]
+            box_h_2 = box_2[3] - box_2[1]
+
+            if abs(top_left_corner - top_left_corner_2) <= y_top_left_corner_delta and \
+               abs(box_w - box_w_2) <= wh_delta and \
+               abs(box_h - box_h_2) <= wh_delta:
+                boxes_count += 1
+                card_number_boxes.append(box_2)
+
+            if boxes_count == 4:
+                break
+
+        if boxes_count == 4:
+            break
+
+    # sort card number boxes in order from left to right by x coordinate on top left corner
+    # for easier operation it needs to transform array to numpy array
+    sorted_card_number_boxes = np.array(card_number_boxes)
+    col = 0
+    sorted_card_number_boxes = sorted_card_number_boxes[np.argsort(sorted_card_number_boxes[:, col])]
+
+    return sorted_card_number_boxes
 
 
 ############################################################
