@@ -232,7 +232,7 @@ def read_card(model, img_file=None):
     # prepared_card_image = input_image
 
     print('[INFO] Card reading...')
-    card_number = _get_card_number(prepared_card_image)
+    card_number = _get_card_number_and_valid_date(prepared_card_image)
     print(card_number)
 
 
@@ -433,30 +433,35 @@ def _get_birds_eye_view_image(image, four_points):
     return birds_eye_view_image
 
 
-def _get_card_number(image):
+def _get_card_number_and_valid_date(image):
 
     image_for_east, east_image_width, east_image_height, ratio_h, ratio_w = _prepare_image_for_east_detector(image)
     all_text_boxes_on_card = _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w)
-
+    print('[DEBUG] All text boxes 1 =', len(all_text_boxes_on_card))
     # debugging
-    border_color = (0, 0, 255)
-    for box in all_text_boxes_on_card:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
-    cv2.imshow("Debugging text rois", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    # border_color = (0, 0, 255)
+    # for box in all_text_boxes_on_card:
+    #     cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+    # cv2.imshow("Debugging text rois", image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
     card_number_text_boxes = _get_card_number_boxes(all_text_boxes_on_card)
     for box in card_number_text_boxes:
         # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
         roi = image[box[1]:box[3], box[0]:box[2]]
-        cv2.imshow("Debugging text rois", roi)
-        cv2.waitKey(0)
+    #     cv2.imshow("Debugging text rois", roi)
+    #     cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    print('[DEBUG] All text boxes 1.5 = ', len(all_text_boxes_on_card))
+    valid_date_text_boxes = _get_valid_date_boxes(all_text_boxes_on_card, card_number_text_boxes, image)
 
+    border_color = (0, 0, 255)
+    for box in valid_date_text_boxes:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+    cv2.imshow("Debugging text rois", image)
+    cv2.waitKey(0)
     cv2.destroyAllWindows()
-
-
-
 
     text = 'test'
     return text
@@ -597,7 +602,6 @@ def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h
 
 
 def _get_card_number_boxes(boxes_list):
-
     # card number boxes are:
     # -- four boxes
     # -- y_top_left_corner are approximately equal (in range some small delta)
@@ -618,7 +622,7 @@ def _get_card_number_boxes(boxes_list):
         card_number_boxes.append(box)
         boxes_count = 1
 
-        boxes_list_without_current_box = boxes_list
+        boxes_list_without_current_box = boxes_list.copy()
         del boxes_list_without_current_box[idx]
 
         for box_2 in boxes_list_without_current_box:
@@ -646,6 +650,32 @@ def _get_card_number_boxes(boxes_list):
 
     return sorted_card_number_boxes
 
+
+def _get_valid_date_boxes(boxes_list, card_number_text_boxes, image):
+    # valid date box is:
+    # -- not card number box (located below)
+    # -- side ratio in range 2.6 - 3.5 (was chosen experimentally)
+    # -- contains symbol '/' - it will check OCR
+    # -- if two blocks on the same line - choose the righter one
+
+    # find bottom line of card_numbers
+    # it's max of bottom right corner
+    y_bottom_right_corners = card_number_text_boxes[:, [3]]
+    card_number_bottom_line = np.amax(y_bottom_right_corners)
+
+    valid_date_candidate_boxes = []
+    for box in boxes_list:
+        box_y_top_coordinate = box[1]
+
+        if box_y_top_coordinate > card_number_bottom_line:
+            box_w = box[2] - box[0]
+            box_h = box[3] - box[1]
+            box_aspect_ratio = box_w / box_h
+            if box_aspect_ratio >= 2.6 and \
+               box_aspect_ratio < 3.6:
+                valid_date_candidate_boxes.append(box)
+
+    return valid_date_candidate_boxes
 
 ############################################################
 #  Training
