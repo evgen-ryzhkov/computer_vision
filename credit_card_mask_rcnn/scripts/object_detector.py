@@ -37,9 +37,13 @@ import numpy as np
 import skimage.draw
 
 import cv2
-import pytesseract
 import imutils
 from imutils.object_detection import non_max_suppression
+
+from google.cloud import vision
+import io
+import base64
+import requests
 
 
 
@@ -55,6 +59,9 @@ ROOT_DIR = os.path.abspath("../")
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
 from mrcnn import model as modellib, utils
+
+import config.access as access_config
+import config.main as main_config
 
 # todo - remove settings to main config
 # Path to trained weights file
@@ -233,7 +240,10 @@ def read_card(model, img_file=None):
 
     print('[INFO] Card reading...')
     card_number = _get_card_number_and_valid_date(prepared_card_image)
-    print(card_number)
+    expiry_date = '??'
+    print('\n[OK] Card reading has been finished successfully:')
+    print('-- Card number = {}\n'.format(card_number))
+    print('-- Expiry date = ', expiry_date)
 
 
 def _get_object_instance(model, image):
@@ -436,35 +446,59 @@ def _get_birds_eye_view_image(image, four_points):
 def _get_card_number_and_valid_date(image):
 
     image_for_east, east_image_width, east_image_height, ratio_h, ratio_w = _prepare_image_for_east_detector(image)
+    # cv2.imshow("Debugging text rois", image_for_east)
+    # cv2.waitKey(0)
+
     all_text_boxes_on_card = _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w)
-    print('[DEBUG] All text boxes 1 =', len(all_text_boxes_on_card))
+
     # debugging
-    # border_color = (0, 0, 255)
+    border_color = (0, 0, 255)
     # for box in all_text_boxes_on_card:
     #     cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
     # cv2.imshow("Debugging text rois", image)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
-
+    card_number_roi_arr = []
     card_number_text_boxes = _get_card_number_boxes(all_text_boxes_on_card)
-    for box in card_number_text_boxes:
-        # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
-        roi = image[box[1]:box[3], box[0]:box[2]]
-    #     cv2.imshow("Debugging text rois", roi)
-    #     cv2.waitKey(0)
+    # for idx, box in enumerate(card_number_text_boxes):
+    #     # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+    #     roi = image[box[1]:box[3], box[0]:box[2]]
+    #     card_number_roi_arr.append(roi)
+
+    big_roi_11 = card_number_text_boxes[0][1]
+    big_roi_12 = card_number_text_boxes[3][3]
+    big_roi_21 = card_number_text_boxes[0][0]
+    big_roi_22 = card_number_text_boxes[3][2]
+
+    card_number_joint_roi = image[big_roi_11:big_roi_12, big_roi_21:big_roi_22]
+
+    # cv2.imshow("Debugging big roi", card_number_joint_roi)
+    # cv2.waitKey(0)
     # cv2.destroyAllWindows()
-    print('[DEBUG] All text boxes 1.5 = ', len(all_text_boxes_on_card))
+
     valid_date_text_boxes = _get_valid_date_boxes(all_text_boxes_on_card, card_number_text_boxes, image)
 
-    border_color = (0, 0, 255)
+    valid_date_roi_arr = []
     for box in valid_date_text_boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
-    cv2.imshow("Debugging text rois", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+        # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+        roi = image[box[1]:box[3], box[0]:box[2]]
+        valid_date_roi_arr.append(roi)
+    # cv2.imshow("Debugging text rois", image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # print('[DEBUGGING] card number roi ', len(card_number_roi_arr))
+    # for roi in card_number_roi_arr:
+    #
+    #     number = _read_text_from_image(roi)
+    #     print('[DEBUGGING] text = ', number)
 
-    text = 'test'
-    return text
+    print('-- [INFO] reading card number by Google vision...')
+    card_number = _read_text_from_roi(card_number_joint_roi)
+    # cv2.imshow("Debugging text rois", roi)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # _read_text_from_roi()
+    return card_number
 
 
 def _prepare_image_for_east_detector(image):
@@ -472,8 +506,8 @@ def _prepare_image_for_east_detector(image):
 
     # The EAST model requires that your input image dimensions be multiples of 32
     # just choose our image size = 320x320
-    east_image_height = 960
-    east_image_width = 960
+    east_image_height = 640
+    east_image_width = 640
     image_for_east = np.zeros((east_image_height, east_image_width, 3), np.uint8)
 
     # for good text reading, it need to resize image to size east model required with keeping aspect ration
@@ -583,7 +617,7 @@ def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h
     text_roi_arr = []
     # because boundary has not very good accuracy
     # adding padding for better text capturing
-    roi_padding_val = 5
+    roi_padding_val = 10
 
     for box in boxes:
         top_left_x = int(box[0] * ratio_w)
@@ -676,6 +710,42 @@ def _get_valid_date_boxes(boxes_list, card_number_text_boxes, image):
                 valid_date_candidate_boxes.append(box)
 
     return valid_date_candidate_boxes
+
+
+def _read_text_from_roi(image):
+    request_params = {'key': access_config.GOOGLE_VISION_API_KEY}
+    body = make_request(image)
+    response = requests.post(url=main_config.VISION_API_URL, params=request_params, json=body)
+    response_json = response.json()
+    card_number = response_json['responses'][0]['textAnnotations'][0]['description']
+    return card_number
+
+
+def make_request(image):
+    image_base_64 = _convert_img_to_base64(image)
+
+    return {
+      "requests": [
+        {
+          "features": [
+            {
+              "maxResults": 2,
+              "type": "DOCUMENT_TEXT_DETECTION"
+            }
+          ],
+          "image": {
+             'content': image_base_64
+          }
+        }
+      ]
+    }
+
+
+def _convert_img_to_base64(image):
+    buffer = cv2.imencode('.jpg', image)[1]
+    img_base64 = base64.b64encode(buffer)
+    img_base64 = img_base64.decode("utf-8")
+    return img_base64
 
 ############################################################
 #  Training
