@@ -363,18 +363,6 @@ def _get_biggest_contour(image):
     card_contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     biggest_contour = max(card_contours, key=cv2.contourArea)
-
-    # debugging if the contour is right
-    # img_copy_1 = image.copy()
-    # cv2.drawContours(img_copy_1, card_contours, -1, (0, 255, 0), 3)
-    # cv2.imshow("All contours", img_copy_1)
-    # cv2.waitKey(0)
-    #
-    # img_copy_2 = image.copy()
-    # cv2.drawContours(img_copy_2, [biggest_contour], -1, (0, 255, 0), 3)
-    # cv2.imshow("The biggest contour", img_copy_2)
-    # cv2.waitKey(0)
-
     return biggest_contour
 
 
@@ -452,7 +440,7 @@ def _get_card_number_and_valid_date(image):
     all_text_boxes_on_card = _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w)
 
     # debugging
-    border_color = (0, 0, 255)
+    # border_color = (0, 0, 255)
     # for box in all_text_boxes_on_card:
     #     cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
     # cv2.imshow("Debugging text rois", image)
@@ -465,12 +453,17 @@ def _get_card_number_and_valid_date(image):
     #     roi = image[box[1]:box[3], box[0]:box[2]]
     #     card_number_roi_arr.append(roi)
 
+    # for request to google api reducing
+    # joint number as one image
     big_roi_11 = card_number_text_boxes[0][1]
     big_roi_12 = card_number_text_boxes[3][3]
     big_roi_21 = card_number_text_boxes[0][0]
     big_roi_22 = card_number_text_boxes[3][2]
 
     card_number_joint_roi = image[big_roi_11:big_roi_12, big_roi_21:big_roi_22]
+
+    # debugging of digits reading
+    # cv2.imwrite(TEST_IMAGES_DIR + 'test_2.jpg', card_number_joint_roi)
 
     # cv2.imshow("Debugging big roi", card_number_joint_roi)
     # cv2.waitKey(0)
@@ -493,12 +486,14 @@ def _get_card_number_and_valid_date(image):
     #     print('[DEBUGGING] text = ', number)
 
     print('-- [INFO] reading card number by Google vision...')
-    card_number = _read_text_from_roi(card_number_joint_roi)
-    # cv2.imshow("Debugging text rois", roi)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-    # _read_text_from_roi()
-    return card_number
+
+    # card_number = _read_text_from_roi(card_number_joint_roi)
+    # sometimes result of text reading isn't looked nice
+    # formated_card_number = _format_card_number(card_number)
+
+    expiry_date = _get_expiry_date(valid_date_roi_arr)
+    formated_card_number = '??'
+    return formated_card_number
 
 
 def _prepare_image_for_east_detector(image):
@@ -617,7 +612,8 @@ def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h
     text_roi_arr = []
     # because boundary has not very good accuracy
     # adding padding for better text capturing
-    roi_padding_val = 10
+    roi_padding_x = 10
+    roi_padding_y = 20 # google vision works better if there is some space after roi
 
     for box in boxes:
         top_left_x = int(box[0] * ratio_w)
@@ -625,12 +621,14 @@ def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h
         bottom_right_x = int(box[2] * ratio_w)
         bottom_right_y = int(box[3] * ratio_h)
 
-        top_left_x = top_left_x - roi_padding_val
-        top_left_y = top_left_y - roi_padding_val
-        bottom_right_x = bottom_right_x + roi_padding_val
-        bottom_right_y = bottom_right_y + roi_padding_val
+        top_left_x = top_left_x - roi_padding_x
+        top_left_y = top_left_y - roi_padding_x
+        bottom_right_x = bottom_right_x + roi_padding_x
+        bottom_right_y = bottom_right_y + roi_padding_y
 
         text_roi_arr.append((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
+
+
 
     return text_roi_arr
 
@@ -686,7 +684,7 @@ def _get_card_number_boxes(boxes_list):
 
 
 def _get_valid_date_boxes(boxes_list, card_number_text_boxes, image):
-    # valid date box is:
+    # expiry date box is:
     # -- not card number box (located below)
     # -- side ratio in range 2.6 - 3.5 (was chosen experimentally)
     # -- contains symbol '/' - it will check OCR
@@ -729,16 +727,80 @@ def make_request(image):
         {
           "features": [
             {
-              "maxResults": 2,
-              "type": "DOCUMENT_TEXT_DETECTION"
+               "maxResults": 2,
+               "type": "DOCUMENT_TEXT_DETECTION"
             }
           ],
           "image": {
              'content': image_base_64
+          },
+          "imageContext": {
+              "languageHints": ["en"]
           }
         }
       ]
     }
+    # return  {
+    #     "requests": [
+    #         {
+    #             "features": [
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "LANDMARK_DETECTION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "FACE_DETECTION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "OBJECT_LOCALIZATION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "LOGO_DETECTION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "LABEL_DETECTION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "DOCUMENT_TEXT_DETECTION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "SAFE_SEARCH_DETECTION"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "IMAGE_PROPERTIES"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "CROP_HINTS"
+    #                 },
+    #                 {
+    #                     "maxResults": 50,
+    #                     "type": "WEB_DETECTION"
+    #                 }
+    #             ],
+    #             "image": {
+    #                 "content": image_base_64
+    #             },
+    #             "imageContext": {
+    #                 "cropHintsParams": {
+    #                     "aspectRatios": [
+    #                         0.8,
+    #                         1,
+    #                         1.2
+    #                     ]
+    #                 },
+    #                 "languageHints": ["en"]
+    #             }
+    #         }
+    #     ]
+    # }
 
 
 def _convert_img_to_base64(image):
@@ -746,6 +808,72 @@ def _convert_img_to_base64(image):
     img_base64 = base64.b64encode(buffer)
     img_base64 = img_base64.decode("utf-8")
     return img_base64
+
+
+def _format_card_number(card_number):
+
+    card_number_without_spaces = card_number.replace(' ', '')
+    print(card_number_without_spaces)
+    formated_card_number = card_number_without_spaces[:4] + ' ' + card_number_without_spaces[4:8] + ' ' + \
+                           card_number_without_spaces[8:12] + ' ' + card_number_without_spaces[-5:]
+
+    return formated_card_number
+
+
+def _get_expiry_date(roi_arr):
+    # for google api requests reducing
+    # joint candidates roi into one roi
+    joint_roi = _joint_expiry_date_roi(roi_arr)
+    # expiry_date_roi = _define_expiry_date_roi(roi_arr)
+
+    return '??'
+
+from PIL import Image
+def _joint_expiry_date_roi(roi_arr):
+    # joint_roi_cols = max width among roi + borders_paddings*2 (both side)
+    # joint_roi_rows = sum height of all roi + borders_paddings (top side) + joint_roi_space_between_rows * roi_cols
+    joint_roi_rows = 0
+    joint_roi_cols = 0
+    joint_roi_space_between_rows = 20
+    joint_roi_space_borders_paddings = 20
+    # print('roi_arr ', roi_arr)
+    # print('roi_arr shape ', roi_arr.shape)
+    for roi in roi_arr:
+        roi_w = roi.shape[1]
+        roi_h = roi.shape[0]
+        print('roi_w = ', roi_w)
+        print('roi_h = ', roi_h)
+        # cv2.imshow("Debugging date rois", roi)
+        # cv2.waitKey(0)
+
+        if roi_w > joint_roi_cols:
+            joint_roi_cols = roi_w
+        joint_roi_rows = joint_roi_rows + roi_h + joint_roi_space_between_rows
+    # cv2.destroyAllWindows()
+    joint_roi_rows += joint_roi_space_borders_paddings
+    joint_roi_cols = joint_roi_cols + 2*joint_roi_space_borders_paddings
+
+    joint_roi = np.zeros((joint_roi_rows, joint_roi_cols, 3), np.uint8)
+
+    print('joint_roi shape', joint_roi.shape)
+    insert_row_start = joint_roi_space_borders_paddings
+    insert_col_start = joint_roi_space_borders_paddings
+    for idx, roi in enumerate(roi_arr):
+        roi_w = roi.shape[1]
+        roi_h = roi.shape[0]
+        insert_col_end = insert_col_start + roi_w
+        insert_row_end = insert_row_start + roi_h
+
+        joint_roi[insert_row_start:insert_row_end, insert_col_start:insert_col_end] = roi
+        insert_row_start = insert_row_end + joint_roi_space_between_rows
+
+    # joint_roi[:roi.shape[0], :roi.shape[1]] = roi
+    cv2.imshow("Debugging date rois", joint_roi)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    # for roi in roi_arr:
+
+
 
 ############################################################
 #  Training
