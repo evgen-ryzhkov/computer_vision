@@ -25,9 +25,6 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
 
 """
 
-
-# import config.main as config
-
 import os
 import sys
 import json
@@ -225,25 +222,24 @@ def read_card(model, img_file=None):
     input_image = cv2.imread(TEST_IMAGES_DIR + img_file)
     card_image = _get_object_instance(model, input_image)
 
-    # cv2.imshow("Card image", card_image)
+    # cv2.imshow("Step 1 - object instance ", card_image)
     # cv2.waitKey(0)
 
+    # card_image = input_image
     prepared_card_image = _prepare_card_for_text_reading(card_image)
     # prepared_card_image = input_image
 
-    # cv2.imshow("Debugging", prepared_card_image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    cv2.imshow("Debugging prepared card image", prepared_card_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     # todo - remove after debugging
     # prepared_card_image = input_image
 
-    print('[INFO] Card reading...')
-    card_number = _get_card_number_and_valid_date(prepared_card_image)
-    expiry_date = '??'
-    print('\n[OK] Card reading has been finished successfully:')
-    print('-- Card number = {}\n'.format(card_number))
-    print('-- Expiry date = ', expiry_date)
+    # print('[INFO] Card reading...')
+    # card_number, expiry_date = _get_card_number_and_valid_date(prepared_card_image)
+    # print('\n[OK] Card reading has been finished successfully:')
+    # print('-- Card number = {}\n -- Expriry date = {}'.format(card_number, expiry_date))
 
 
 def _get_object_instance(model, image):
@@ -252,7 +248,7 @@ def _get_object_instance(model, image):
     found_objects_count = r['class_ids'].shape[-1]
 
     if found_objects_count > 0:
-        # For more simple debugging will work with the first instance only
+        # todo There is not processing for case when there are several cards on the image
         first_credit_card_instance = {
             'roi': r['rois'][0],
             'scores': r['scores'][0],
@@ -263,7 +259,7 @@ def _get_object_instance(model, image):
         roi_box = first_credit_card_instance['roi']
 
         # look at bbox for debugging
-        # credit_card_bbox = image[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
+        credit_card_bbox = image[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
         # cv2.imshow("Box roi", credit_card_bbox)
         # cv2.waitKey(0)
 
@@ -288,6 +284,7 @@ def _get_object_instance(model, image):
 
 
 def _prepare_card_for_text_reading(card_instance):
+    # getting bird eye view of credit card for better text reading
     instance_with_background_around = _add_background_around_instance_roi(card_instance)
     bird_eye_view_instance = _get_birds_eye_view_roi(instance_with_background_around)
     return bird_eye_view_instance
@@ -302,9 +299,13 @@ def _add_background_around_instance_roi(instance_img):
     instance_img_height = instance_img.shape[0]
     instance_img_width = instance_img.shape[1]
 
-    instance_with_background_around_height = instance_img_height + 10
-    instance_with_background_around_width = instance_img_width + 10
+    print('Image h before =', instance_img_height)
+    print('Image w before =', instance_img_width)
+    instance_with_background_around_height = instance_img_height + 40
+    instance_with_background_around_width = instance_img_width + 40
     instance_with_background_around = np.zeros((instance_with_background_around_height, instance_with_background_around_width, 3), np.uint8)
+    print('Image h(rows) before =', instance_with_background_around.shape[0])
+    print('Image w(cols) before =', instance_with_background_around.shape[1])
 
     # for better detection card contour, background has to be contrast to card color
     # if card light - background dark, else backgound light
@@ -320,11 +321,11 @@ def _add_background_around_instance_roi(instance_img):
         background_color = (0, 0, 0)
 
     instance_with_background_around[:] = background_color
-    instance_with_background_around[4:instance_img_height+4, 4:instance_img_width+4] = instance_img
+    instance_with_background_around[20:instance_img_height+20, 20:instance_img_width+20] = instance_img
 
-    # cv2.imshow("Instance with background around", instance_with_background_around)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    cv2.imshow("Instance with background around", instance_with_background_around)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     return instance_with_background_around
 
@@ -350,14 +351,27 @@ def _get_birds_eye_view_roi(instance_image):
 def _get_biggest_contour(image):
     # convert the image to grayscale, blur it, and find edges
     # in the image
-    # image = cv2.imread(TEST_IMAGES_DIR + 'img_5.jpg')
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 11, 17, 17)
-    edged = cv2.Canny(gray, 30, 200)
+
+    # adaptive choose parameters for Canny detection
+    v = np.median(gray)
+    sigma = 0.5
+    lower = int(max(0, (1.0 - sigma) * v))
+    upper = int(min(255, (1.0 + sigma) * v))
+
+    edged = cv2.Canny(gray, lower, upper)
+    cv2.imshow("Debugging edged", edged)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     # closed operation in order to contours was closed
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
+
+    cv2.imshow("Debugging closed", closed)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     # find the biggest contours in the edged image
     card_contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -397,8 +411,8 @@ def _get_birds_eye_view_image(image, four_points):
     cv2.circle(image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)   # green
     cv2.circle(image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)         # red
     cv2.circle(image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)   # yellow
-    # cv2.imshow("The vertices", image)
-    # cv2.waitKey(0)
+    cv2.imshow("The vertices", image)
+    cv2.waitKey(0)
 
     # compute the width of the new image, which will be the
     # maximum distance between bottom-right and bottom-left
@@ -432,21 +446,21 @@ def _get_birds_eye_view_image(image, four_points):
 
 
 def _get_card_number_and_valid_date(image):
-
     image_for_east, east_image_width, east_image_height, ratio_h, ratio_w = _prepare_image_for_east_detector(image)
-    # cv2.imshow("Debugging text rois", image_for_east)
-    # cv2.waitKey(0)
+    cv2.imshow("Debugging text rois", image_for_east)
+    cv2.waitKey(0)
 
     all_text_boxes_on_card = _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w)
 
     # debugging
-    # border_color = (0, 0, 255)
-    # for box in all_text_boxes_on_card:
-    #     cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
-    # cv2.imshow("Debugging text rois", image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-    card_number_roi_arr = []
+    border_color = (0, 0, 255)
+    copy_image = image.copy()
+    for box in all_text_boxes_on_card:
+        cv2.rectangle(copy_image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+    cv2.imshow("Debugging text rois", copy_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    # card_number_roi_arr = []
     card_number_text_boxes = _get_card_number_boxes(all_text_boxes_on_card)
     # for idx, box in enumerate(card_number_text_boxes):
     #     # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
@@ -471,12 +485,13 @@ def _get_card_number_and_valid_date(image):
 
     valid_date_text_boxes = _get_valid_date_boxes(all_text_boxes_on_card, card_number_text_boxes, image)
 
+    # copy_image_2 = image.copy()
     valid_date_roi_arr = []
     for box in valid_date_text_boxes:
-        # cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), border_color, 2)
+        # cv2.rectangle(copy_image_2, (box[0], box[1]), (box[2], box[3]), border_color, 2)
         roi = image[box[1]:box[3], box[0]:box[2]]
         valid_date_roi_arr.append(roi)
-    # cv2.imshow("Debugging text rois", image)
+    # cv2.imshow("Debugging text rois", copy_image_2)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
     # print('[DEBUGGING] card number roi ', len(card_number_roi_arr))
@@ -487,13 +502,18 @@ def _get_card_number_and_valid_date(image):
 
     print('-- [INFO] reading card number by Google vision...')
 
-    # card_number = _read_text_from_roi(card_number_joint_roi)
-    # sometimes result of text reading isn't looked nice
-    # formated_card_number = _format_card_number(card_number)
+    card_number = _read_text_from_roi(card_number_joint_roi, text_type='card number')
+    # if card_number != '':
+    #     # sometimes result of text reading isn't looked nice
+    #     formated_card_number = _format_card_number(card_number)
+    # else:
+    #     formated_card_number = 'Card number has not been read.'
 
     expiry_date = _get_expiry_date(valid_date_roi_arr)
+    if expiry_date == '':
+        expiry_date = 'Expiry date has not been read.'
     formated_card_number = '??'
-    return formated_card_number
+    return formated_card_number, expiry_date
 
 
 def _prepare_image_for_east_detector(image):
@@ -612,8 +632,8 @@ def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h
     text_roi_arr = []
     # because boundary has not very good accuracy
     # adding padding for better text capturing
-    roi_padding_x = 10
-    roi_padding_y = 20 # google vision works better if there is some space after roi
+    roi_padding_x = 5
+    roi_padding_y = 20 # sometimes google vision works better if there is some space after roi
 
     for box in boxes:
         top_left_x = int(box[0] * ratio_w)
@@ -622,7 +642,7 @@ def _get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h
         bottom_right_y = int(box[3] * ratio_h)
 
         top_left_x = top_left_x - roi_padding_x
-        top_left_y = top_left_y - roi_padding_x
+        top_left_y = top_left_y
         bottom_right_x = bottom_right_x + roi_padding_x
         bottom_right_y = bottom_right_y + roi_padding_y
 
@@ -686,7 +706,7 @@ def _get_card_number_boxes(boxes_list):
 def _get_valid_date_boxes(boxes_list, card_number_text_boxes, image):
     # expiry date box is:
     # -- not card number box (located below)
-    # -- side ratio in range 2.6 - 3.5 (was chosen experimentally)
+    # -- side ratio in range 2.2 - 3.6 (was chosen experimentally)
     # -- contains symbol '/' - it will check OCR
     # -- if two blocks on the same line - choose the righter one
 
@@ -703,20 +723,36 @@ def _get_valid_date_boxes(boxes_list, card_number_text_boxes, image):
             box_w = box[2] - box[0]
             box_h = box[3] - box[1]
             box_aspect_ratio = box_w / box_h
-            if box_aspect_ratio >= 2.6 and \
+            if box_aspect_ratio >= 2.2 and \
                box_aspect_ratio < 3.6:
                 valid_date_candidate_boxes.append(box)
 
     return valid_date_candidate_boxes
 
 
-def _read_text_from_roi(image):
+def _read_text_from_roi(image, text_type):
     request_params = {'key': access_config.GOOGLE_VISION_API_KEY}
     body = make_request(image)
     response = requests.post(url=main_config.VISION_API_URL, params=request_params, json=body)
     response_json = response.json()
-    card_number = response_json['responses'][0]['textAnnotations'][0]['description']
-    return card_number
+
+    # for card number return only one text
+    if text_type == 'card number':
+        try:
+            text = response_json['responses'][0]['textAnnotations'][0]['description']
+        except:
+            text = ''
+        return text
+
+    # for expiry date could be several candidates
+    elif text_type == 'expiry date':
+        text = response_json['responses'][0]['textAnnotations'][0]['description']
+        # text_candidates_arr = []
+        # text_annotations = response_json['responses'][0]['textAnnotations']
+        # for annotation in text_annotations:
+        #     text_candidates_arr.append(annotation['description'])
+        # return text_candidates_arr
+        return text
 
 
 def make_request(image):
@@ -727,7 +763,7 @@ def make_request(image):
         {
           "features": [
             {
-               "maxResults": 2,
+               "maxResults": 50,
                "type": "DOCUMENT_TEXT_DETECTION"
             }
           ],
@@ -735,72 +771,11 @@ def make_request(image):
              'content': image_base_64
           },
           "imageContext": {
-              "languageHints": ["en"]
+              "languageHints": ["en"],
           }
         }
       ]
     }
-    # return  {
-    #     "requests": [
-    #         {
-    #             "features": [
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "LANDMARK_DETECTION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "FACE_DETECTION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "OBJECT_LOCALIZATION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "LOGO_DETECTION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "LABEL_DETECTION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "DOCUMENT_TEXT_DETECTION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "SAFE_SEARCH_DETECTION"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "IMAGE_PROPERTIES"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "CROP_HINTS"
-    #                 },
-    #                 {
-    #                     "maxResults": 50,
-    #                     "type": "WEB_DETECTION"
-    #                 }
-    #             ],
-    #             "image": {
-    #                 "content": image_base_64
-    #             },
-    #             "imageContext": {
-    #                 "cropHintsParams": {
-    #                     "aspectRatios": [
-    #                         0.8,
-    #                         1,
-    #                         1.2
-    #                     ]
-    #                 },
-    #                 "languageHints": ["en"]
-    #             }
-    #         }
-    #     ]
-    # }
 
 
 def _convert_img_to_base64(image):
@@ -824,11 +799,12 @@ def _get_expiry_date(roi_arr):
     # for google api requests reducing
     # joint candidates roi into one roi
     joint_roi = _joint_expiry_date_roi(roi_arr)
-    # expiry_date_roi = _define_expiry_date_roi(roi_arr)
+    canditate_texts =  _read_text_from_roi(joint_roi, text_type='expiry date')
+    print(canditate_texts)
+    expiry_date = _find_expiry_date_among_candidates(canditate_texts)
+    return expiry_date
 
-    return '??'
 
-from PIL import Image
 def _joint_expiry_date_roi(roi_arr):
     # joint_roi_cols = max width among roi + borders_paddings*2 (both side)
     # joint_roi_rows = sum height of all roi + borders_paddings (top side) + joint_roi_space_between_rows * roi_cols
@@ -836,8 +812,7 @@ def _joint_expiry_date_roi(roi_arr):
     joint_roi_cols = 0
     joint_roi_space_between_rows = 20
     joint_roi_space_borders_paddings = 20
-    # print('roi_arr ', roi_arr)
-    # print('roi_arr shape ', roi_arr.shape)
+
     for roi in roi_arr:
         roi_w = roi.shape[1]
         roi_h = roi.shape[0]
@@ -867,12 +842,27 @@ def _joint_expiry_date_roi(roi_arr):
         joint_roi[insert_row_start:insert_row_end, insert_col_start:insert_col_end] = roi
         insert_row_start = insert_row_end + joint_roi_space_between_rows
 
-    # joint_roi[:roi.shape[0], :roi.shape[1]] = roi
+    cv2.imwrite(TEST_IMAGES_DIR + 'date.jpg', joint_roi)
     cv2.imshow("Debugging date rois", joint_roi)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    # for roi in roi_arr:
+    return joint_roi
 
+
+def _find_expiry_date_among_candidates(canditate_texts):
+    # convert texts to array by '\n' for easier further work
+    canditate_arr = canditate_texts.split('\n')
+
+    # expiry date is:
+    # -- contains /
+    # todo there isn't processng for case when there are several dates on the card
+    # it could be solve by comparing the dates and choosing the biggest one
+    expiry_date = ''
+    for candidate in canditate_arr:
+        if '/' in candidate:
+            expiry_date = candidate
+            break
+    return expiry_date
 
 
 ############################################################

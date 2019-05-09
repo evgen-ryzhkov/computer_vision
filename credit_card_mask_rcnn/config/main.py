@@ -17,3 +17,5 @@ EAST_MODEL_PATH = os.path.join(ROOT_DIR, "east_text_detector/frozen_east_text_de
 VISION_API_URL = 'https://vision.googleapis.com/v1/images:annotate'
 
 
+
+
