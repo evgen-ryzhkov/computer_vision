@@ -1,0 +1,25 @@
+# Data files and directories common in repo root
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Models
+*.pb
+*.h5
+
+# PyCharm
+.idea/
+
+# virtualenv
+venv/
+
+# personal account settings
+config/access.py
+
