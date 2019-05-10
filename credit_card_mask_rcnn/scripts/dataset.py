@@ -33,7 +33,7 @@ class Dataset:
         self.search_url = 'https://api.cognitive.microsoft.com/bing/v7.0/images/search'
 
         self.downloaded_images_path = config.DOWNLADED_IMG_DIR
-        self.search_term = ['card visa'] # for diversity use different term 'guitar', 'iron maiden concert' and so on
+        self.search_term = ['card visa'] # for diversity use different term 'debit card', 'card bank of america' and so on
         self.images_amount_for_class = 300
 
     def run(self):

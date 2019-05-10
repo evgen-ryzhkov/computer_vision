@@ -28,7 +28,6 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
 import os
 import sys
 import json
-import datetime
 import time
 import numpy as np
 import skimage.draw
@@ -37,8 +36,6 @@ import cv2
 import imutils
 from imutils.object_detection import non_max_suppression
 
-from google.cloud import vision
-import io
 import base64
 import requests
 import re
@@ -61,7 +58,6 @@ from mrcnn import model as modellib, utils
 import config.access as access_config
 import config.main as main_config
 
-# todo - remove settings to main config
 # Path to trained weights file
 COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mrcnn/mask_rcnn_coco.h5")
 
@@ -232,6 +228,35 @@ def read_card(model, img_file=None):
     card_number, expiry_date = _get_card_number_and_valid_date(prepared_card_image)
     print('\n[OK] Card reading has been finished successfully:')
     print('-- Card number = {}\n-- Expiry date = {}'.format(card_number, expiry_date))
+    _visualize_result(input_image, card_number, expiry_date)
+
+
+def _visualize_result(input_image, card_number, expiry_date):
+    resized_image = imutils.resize(input_image, height=700)
+
+    font = cv2.FONT_HERSHEY_DUPLEX
+    bottom_left_corner_of_text = (10, 30)
+    font_scale = 0.6
+    font_color = (0, 0, 0)
+    line_type = 1
+
+    cv2.putText(resized_image, 'Card number - ' + card_number,
+                bottom_left_corner_of_text,
+                font,
+                font_scale,
+                font_color,
+                line_type)
+    bottom_left_corner_of_text = (10, 60)
+    cv2.putText(resized_image, 'Expiry date - ' + expiry_date,
+                bottom_left_corner_of_text,
+                font,
+                font_scale,
+                font_color,
+                line_type)
+
+    cv2.imshow("Result", resized_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 
 def _get_object_instance(model, image):
@@ -315,21 +340,12 @@ def _get_biggest_contour(image):
     lower, upper = _get_canny_parameters(gray, sigma=0.5)
     edged = cv2.Canny(gray, lower, upper)
 
-    # cv2.imshow("Debugging edged", edged)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
     # closed operation in order to contours was closed
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
 
-    # cv2.imshow("Debugging closed", closed)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
     # find the biggest contours in the edged image
     card_contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     biggest_contour = max(card_contours, key=cv2.contourArea)
     return biggest_contour
 
@@ -401,9 +417,6 @@ def _get_birds_eye_view_image(image, four_points):
     transform_matrix = cv2.getPerspectiveTransform(input_vertices, output_vertices)
     birds_eye_view_image = cv2.warpPerspective(image, transform_matrix, (max_width, max_height))
 
-    # look for debugging
-    # cv2.imshow("The vertices", birds_eye_view_image)
-    # cv2.waitKey(0)
     return birds_eye_view_image
 
 
@@ -747,7 +760,6 @@ def _joint_expiry_date_roi(roi_arr):
         joint_roi[insert_row_start:insert_row_end, insert_col_start:insert_col_end] = roi
         insert_row_start = insert_row_end + joint_roi_space_between_rows
 
-    cv2.imwrite(TEST_IMAGES_DIR + 'date.jpg', joint_roi)
     return joint_roi
 
 
