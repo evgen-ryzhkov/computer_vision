@@ -1,10 +1,9 @@
 """
 Credit card reader
-Reading card number and expiry date in weak controlled space (card form, color, position)
+Reading card number and expiry date in weak controlled space (card form, color, position).
 
-Copyright (c) 2018 Matterport, Inc.
-Licensed under the MIT License (see LICENSE for details)
-Written by Waleed Abdulla
+Written by Evgeniy Ryzhkov
+Work based on work "Splash of Color" by Mattersport, Inc.
 
 ------------------------------------------------------------
 
@@ -14,74 +13,48 @@ Usage:
     python -m scripts.card_reader --image=<image file name in images/test directory>
 
 """
+
 import config.access as access_config
 import config.main as main_config
 
-import sys
 import argparse
-import time
 import numpy as np
-
 import cv2
 import imutils
-from imutils.object_detection import non_max_suppression
-
-import base64
-import requests
 import re
 
+# Nets
+from scripts.nets.mask_rcnn import MaskRCNN
+from scripts.nets.east import EastTextDetection
+from scripts.nets.google_vision import GoogleVision
 
-sys.path.append(main_config.ROOT_DIR)  # To find local version of the library
-# Import Mask RCNN
-from models.mrcnn.config import Config
-from models.mrcnn import model as modellib, utils
-
-
-
-############################################################
-#  Configurations
-############################################################
-
-
-class MaskRCNNConfig(Config):
-    """Configuration for training on the toy  dataset.
-    Derives from the base Config class and overrides some values.
-    """
-    # Give the configuration a recognizable name
-    NAME = "credit_card"
-
-    # We use a GPU with 12GB memory, which can fit two images.
-    # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 1
-    GPU_COUNT = 1
-
-    # Number of classes (including background)
-    NUM_CLASSES = 1 + 1  # Background + balloon
-
-    # Number of training steps per epoch
-    STEPS_PER_EPOCH = 100
-
-    # Skip detections with < 90% confidence
-    DETECTION_MIN_CONFIDENCE = 0.9
+# Some addition utilities
+from scripts.utils.image_processing import ImageProcessing
 
 
 class CreditCardReader():
+
+    def __init__(self):
+        self.image_pros = ImageProcessing()
+        self.google_vision = GoogleVision()
 
     def read_card(self):
         print('[INFO] Loading input image...')
         input_image = self._get_input_image()
 
-        print('[INFO] Loading Mark RCNN model...')
-        mask_rcnn_model = self._get_mask_rcnn_model()
-
-        print('[INFO] Getting card instance image...')
-        card_image = self._get_object_instance(mask_rcnn_model, input_image)
+        print('[INFO] Getting card instance ...')
+        mask_rcnn = MaskRCNN()
+        card_image = mask_rcnn.get_object_instance(image=input_image)
+        if card_image == '':
+            print('[INFO] Credit cards were not found.')
+            exit()
 
         print('[INFO] Preparing card instance image for text reading...')
         prepared_card_image = self._prepare_card_for_text_reading(card_image)
 
         print('[INFO] Card reading...')
         card_number, expiry_date = self._get_card_number_and_valid_date(prepared_card_image)
+
         print('\n[OK] Card reading has been finished successfully:')
         print('-- Card number = {}\n-- Expiry date = {}'.format(card_number, expiry_date))
         self._visualize_result(input_image, card_number, expiry_date)
@@ -102,24 +75,6 @@ class CreditCardReader():
             return input_image
         except:
             print('[ERROR] Image file not found or can not be read.')
-            exit()
-
-    @staticmethod
-    def _get_mask_rcnn_model():
-        mask_rcnn_config = MaskRCNNConfig()
-        model = None
-        try:
-            model = modellib.MaskRCNN(mode="inference", config=mask_rcnn_config,
-                                      model_dir=main_config.MASK_RCNN_LOGS_DIR)
-        except:
-            print('[ERROR] Something wrong with creating model.')
-            exit()
-
-        try:
-            model.load_weights(main_config.MASK_RCNN_LAST_MODEL_WEIGHTS_PATH, by_name=True)
-            return model
-        except:
-            print('[ERROR] Something wrong with weights for Mask RCNN.')
             exit()
 
     @staticmethod
@@ -150,39 +105,10 @@ class CreditCardReader():
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    @staticmethod
-    def _get_object_instance(model, image):
-        # Detecting objects
-        r = model.detect([image], verbose=1)[0]
-        found_objects_count = r['class_ids'].shape[-1]
-
-        if found_objects_count > 0:
-            # todo There is not processing for case when there are several cards on the image
-            first_credit_card_instance = {
-                'roi': r['rois'][0],
-                'scores': r['scores'][0],
-                'mask': r['masks'][:, :, 0]
-            }
-            roi_box = first_credit_card_instance['roi']
-            mask = first_credit_card_instance['mask']
-
-            # maybe it could be done easier
-            # convert the mask from a boolean to an integer mask with
-            # to values: 0 or 255, then apply the mask
-            vis_mask = (mask * 255).astype("uint8")
-            masked_img = cv2.bitwise_and(image, image, mask=vis_mask)
-
-            # getting masked roi
-            credit_card_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
-            return credit_card_instance
-
-        else:
-            print('Credit cards were not found.')
-
     def _prepare_card_for_text_reading(self, card_instance):
         # getting bird eye view of credit card for better text reading
         instance_with_background_around = self._add_background_around_instance_roi(card_instance)
-        bird_eye_view_instance = self._get_birds_eye_view_roi(instance_with_background_around)
+        bird_eye_view_instance = self.image_pros.get_birds_eye_view_roi(instance_image=instance_with_background_around)
         return bird_eye_view_instance
 
     @staticmethod
@@ -205,113 +131,9 @@ class CreditCardReader():
 
         return instance_with_background_around
 
-    def _get_birds_eye_view_roi(self, instance_image):
-        # algorithm:
-        #   0. resize image to smaller size for better perfomance
-        #   1. find the biggest contour
-        #   2. find 4 vertices
-        #   3. perspective transform image by 4 vertices
-
-        # for increase work speed
-        # maybe it will need to turn on
-        ratio = instance_image.shape[0] / 300.0
-        resized_image = imutils.resize(instance_image, height=960)
-
-        biggest_contour = self._get_biggest_contour(resized_image)
-        vertices = self._get_vertices(biggest_contour)
-        birds_eye_view_image = self._get_birds_eye_view_image(resized_image, vertices)
-        return birds_eye_view_image
-
-    def _get_biggest_contour(self, image):
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # remove high frequency noises
-        gray = cv2.bilateralFilter(gray, 11, 17, 17)
-        lower, upper = self._get_canny_parameters(gray, sigma=0.5)
-        edged = cv2.Canny(gray, lower, upper)
-
-        # closed operation in order to contours was closed
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
-
-        # find the biggest contours in the edged image
-        card_contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        biggest_contour = max(card_contours, key=cv2.contourArea)
-        return biggest_contour
-
-    @staticmethod
-    def _get_canny_parameters(img_gray, sigma=0.5):
-        # automatic choose parameters for Canny detection
-        v = np.median(img_gray)
-        lower = int(max(0, (1.0 - sigma) * v))
-        upper = int(min(255, (1.0 + sigma) * v))
-        return lower, upper
-
-    @staticmethod
-    def _get_vertices(contour):
-        rect = cv2.minAreaRect(contour)
-        box = cv2.boxPoints(rect)
-        box = np.int0(box)
-        return box
-
-    @staticmethod
-    def _get_birds_eye_view_image(image, four_points):
-        # for this prototype it required that card will be in album view
-        # there is no processing for portrait view
-
-        # define order of corners
-        # the top-left point will have the smallest sum, whereas
-        # the bottom-right point will have the largest sum
-        s = four_points.sum(axis=1)
-        top_left = four_points[np.argmin(s)]
-        bottom_right = four_points[np.argmax(s)]
-
-        # now, compute the difference between the points, the
-        # top-right point will have the smallest difference,
-        # whereas the bottom-left will have the largest difference
-        diff = np.diff(four_points, axis=1)
-        top_right = four_points[np.argmin(diff)]
-        bottom_left = four_points[np.argmax(diff)]
-
-        # look for debugging
-        # point colors - BGR format
-        # cv2.circle(image, (top_left[0], top_left[1]), 5, (255, 0, 0), -1)           # blue
-        # cv2.circle(image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)   # green
-        # cv2.circle(image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)         # red
-        # cv2.circle(image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)   # yellow
-        # cv2.imshow("The vertices", image)
-        # cv2.waitKey(0)
-
-        # compute the width of the new image, which will be the
-        # maximum distance between bottom-right and bottom-left
-        # x-coordiates or the top-right and top-left x-coordinates
-        width_a = np.sqrt(((bottom_right[0] - bottom_left[0]) ** 2) + ((bottom_right[1] - bottom_left[1]) ** 2))
-        width_b = np.sqrt(((top_right[0] - top_left[0]) ** 2) + ((top_right[1] - top_left[1]) ** 2))
-        max_width = max(int(width_a), int(width_b))
-
-        # compute the height of the new image, which will be the
-        # maximum distance between the top-right and bottom-right
-        # y-coordinates or the top-left and bottom-left y-coordinates
-        height_a = np.sqrt(((top_right[0] - bottom_right[0]) ** 2) + ((top_right[1] - bottom_right[1]) ** 2))
-        height_b = np.sqrt(((top_left[0] - bottom_left[0]) ** 2) + ((top_left[1] - bottom_left[1]) ** 2))
-        max_height = max(int(height_a), int(height_b))
-
-        input_vertices = np.float32([top_left, top_right, bottom_right, bottom_left])
-        output_vertices = np.array([
-            [0, 0],
-            [max_width-1, 0],
-            [max_width-1, max_height-1],
-            [0, max_height-1]
-        ], dtype="float32")
-
-        transform_matrix = cv2.getPerspectiveTransform(input_vertices, output_vertices)
-        birds_eye_view_image = cv2.warpPerspective(image, transform_matrix, (max_width, max_height))
-
-        return birds_eye_view_image
-
-
     def _get_card_number_and_valid_date(self, image):
-        image_for_east, east_image_width, east_image_height, ratio_h, ratio_w = self._prepare_image_for_east_detector(image)
-        all_text_boxes_on_card = self._get_text_boxes(image_for_east, east_image_width, east_image_height, ratio_h, ratio_w)
+        east_text_detector = EastTextDetection()
+        all_text_boxes_on_card = east_text_detector.get_text_boxes(image=image)
 
         card_number_text_boxes = self._get_card_number_boxes(all_text_boxes_on_card)
 
@@ -330,7 +152,10 @@ class CreditCardReader():
             valid_date_roi_arr.append(roi)
 
         print('-- [INFO] reading card number by Google vision...')
-        card_number = self._read_text_from_roi(card_number_joint_roi)
+        # prepare image for google vision
+        card_number_joint_roi_base64 = self.image_pros.convert_img_to_base64(card_number_joint_roi)
+
+        card_number = self.google_vision.read_text_from_image(card_number_joint_roi_base64)
         if card_number != '':
             # sometimes result of text reading by Google vision isn't look nice
             formatted_card_number = self._format_card_number(card_number)
@@ -339,143 +164,9 @@ class CreditCardReader():
 
         expiry_date = self._get_expiry_date(valid_date_roi_arr)
         if expiry_date == '':
-            expiry_date = 'Expiry date has not been read.'
+            expiry_date = '[INFO] Expiry date has not been read.'
 
         return formatted_card_number, expiry_date
-
-    @staticmethod
-    def _prepare_image_for_east_detector(image):
-        # getting card number roi
-
-        # The EAST model requires that your input image dimensions be multiples of 32
-        # just choose our image size = 640x640
-        east_image_height = 640
-        east_image_width = 640
-        image_for_east = np.zeros((east_image_height, east_image_width, 3), np.uint8)
-
-        # for good text reading, it need to resize image to size east model required with keeping aspect ration
-        (input_image_height, input_image_width) = image.shape[:2]
-        input_image_ratio = input_image_width / input_image_height
-        resized_image_width = east_image_width
-        resized_image_height = int(input_image_height / input_image_ratio)
-        resized_image = cv2.resize(image, (resized_image_width, resized_image_height), interpolation=cv2.INTER_AREA)
-
-        ratio_h = input_image_height / float(resized_image_height)
-        ratio_w = input_image_width / float(resized_image_width)
-
-        # insert resized_image to image for east model
-        image_for_east[0:resized_image_height, 0:resized_image_width] = resized_image
-
-        return image_for_east, east_image_width, east_image_height, ratio_h, ratio_w
-
-    @staticmethod
-    def _decode_east_text_predictions(scores, geometry):
-        # grab the number of rows and columns from the scores volume, then
-        # initialize our set of bounding box rectangles and corresponding
-        # confidence scores
-        (numRows, numCols) = scores.shape[2:4]
-        rects = []
-        confidences = []
-
-        # loop over the number of rows
-        for y in range(0, numRows):
-            # extract the scores (probabilities), followed by the
-            # geometrical data used to derive potential bounding box
-            # coordinates that surround text
-            scoresData = scores[0, 0, y]
-            xData0 = geometry[0, 0, y]
-            xData1 = geometry[0, 1, y]
-            xData2 = geometry[0, 2, y]
-            xData3 = geometry[0, 3, y]
-            anglesData = geometry[0, 4, y]
-
-            # loop over the number of columns
-            for x in range(0, numCols):
-                # if our score does not have sufficient probability,
-                # ignore it
-                if scoresData[x] < main_config.EAST_MIN_CONFIDENCE:
-                    continue
-
-                # compute the offset factor as our resulting feature
-                # maps will be 4x smaller than the input image
-                (offsetX, offsetY) = (x * 4.0, y * 4.0)
-
-                # extract the rotation angle for the prediction and
-                # then compute the sin and cosine
-                angle = anglesData[x]
-                cos = np.cos(angle)
-                sin = np.sin(angle)
-
-                # use the geometry volume to derive the width and height
-                # of the bounding box
-                h = xData0[x] + xData2[x]
-                w = xData1[x] + xData3[x]
-
-                # compute both the starting and ending (x, y)-coordinates
-                # for the text prediction bounding box
-                endX = int(offsetX + (cos * xData1[x]) + (sin * xData2[x]))
-                endY = int(offsetY - (sin * xData1[x]) + (cos * xData2[x]))
-                startX = int(endX - w)
-                startY = int(endY - h)
-
-                # add the bounding box coordinates and probability score
-                # to our respective lists
-                rects.append((startX, startY, endX, endY))
-                confidences.append(scoresData[x])
-
-        # return a tuple of the bounding boxes and associated confidences
-        return (rects, confidences)
-
-    def _get_text_boxes(self, image_for_east, east_image_width, east_image_height, ratio_h, ratio_w):
-
-        # define the two output layer names for the EAST detector model that
-        # we are interested -- the first is the output probabilities and the
-        # second can be used to derive the bounding box coordinates of text
-        output_layers = [
-            "feature_fusion/Conv_7/Sigmoid",
-            "feature_fusion/concat_3"]
-
-        # load the pre-trained EAST text detector
-        print("-- [INFO] loading EAST text detector...")
-        net = cv2.dnn.readNet(main_config.EAST_MODEL_PATH)
-
-        # construct a blob from the image and then perform a forward pass of
-        # the model to obtain the two output layer sets
-        blob = cv2.dnn.blobFromImage(image_for_east, 1.0, (east_image_width, east_image_height),
-                                     (123.68, 116.78, 103.94), swapRB=True, crop=False)
-        start = time.time()
-        net.setInput(blob)
-        (scores, geometry) = net.forward(output_layers)
-        end = time.time()
-
-        # show timing information on text prediction
-        print("-- [INFO] text detection took {:.6f} seconds".format(end - start))
-
-        # decode the predictions, then  apply non-maxima suppression to
-        # suppress weak, overlapping bounding boxes
-        (rects, confidences) = self._decode_east_text_predictions(scores, geometry)
-        boxes = non_max_suppression(np.array(rects), probs=confidences)
-
-        text_roi_arr = []
-        # because boundary has not very good accuracy
-        # adding padding for better text capturing
-        roi_padding_x = 5
-        roi_padding_y = 20 # sometimes google vision works better if there is some space after roi
-
-        for box in boxes:
-            top_left_x = int(box[0] * ratio_w)
-            top_left_y = int(box[1] * ratio_h)
-            bottom_right_x = int(box[2] * ratio_w)
-            bottom_right_y = int(box[3] * ratio_h)
-
-            top_left_x = top_left_x - roi_padding_x
-            top_left_y = top_left_y
-            bottom_right_x = bottom_right_x + roi_padding_x
-            bottom_right_y = bottom_right_y + roi_padding_y
-
-            text_roi_arr.append((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
-
-        return text_roi_arr
 
     @staticmethod
     def _get_card_number_boxes(boxes_list):
@@ -554,48 +245,6 @@ class CreditCardReader():
 
         return valid_date_candidate_boxes
 
-
-    def _read_text_from_roi(self, image):
-        request_params = {'key': access_config.GOOGLE_VISION_API_KEY}
-        body = self._make_request(image)
-        response = requests.post(url=main_config.VISION_API_URL, params=request_params, json=body)
-        response_json = response.json()
-
-        try:
-            text = response_json['responses'][0]['textAnnotations'][0]['description']
-        except:
-            text = ''
-        return text
-
-    def _make_request(self, image):
-        image_base_64 = self._convert_img_to_base64(image)
-        # languageHints needs because sometimes google vision tryied read numbers as not English characters (Cyrillic for instance)
-        return {
-          "requests": [
-            {
-              "features": [
-                {
-                   "maxResults": 50,
-                   "type": "DOCUMENT_TEXT_DETECTION"
-                }
-              ],
-              "image": {
-                 'content': image_base_64
-              },
-              "imageContext": {
-                  "languageHints": ["en"],
-              }
-            }
-          ]
-        }
-
-    @staticmethod
-    def _convert_img_to_base64(image):
-        buffer = cv2.imencode('.jpg', image)[1]
-        img_base64 = base64.b64encode(buffer)
-        img_base64 = img_base64.decode("utf-8")
-        return img_base64
-
     @staticmethod
     def _format_card_number(card_number):
         # remove spaces and some noise characters for good formatting
@@ -610,7 +259,8 @@ class CreditCardReader():
         # for google api requests reducing
         # joint candidates roi into one roi
         joint_roi = self._joint_expiry_date_roi(roi_arr)
-        canditate_texts =  self._read_text_from_roi(joint_roi)
+        joint_roi_base64 = self.image_pros.convert_img_to_base64(joint_roi)
+        canditate_texts =  self.google_vision.read_text_from_image(joint_roi_base64)
         expiry_date = self._find_expiry_date_among_candidates(canditate_texts)
         return expiry_date
 
