@@ -62,7 +62,7 @@ class CreditCardConfig(Config):
     Derives from the base Config class and overrides some values.
     """
     # Give the configuration a recognizable name
-    NAME = "credit_card"
+    NAME = "driving_licence"
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
@@ -82,15 +82,15 @@ class CreditCardConfig(Config):
 #  Dataset
 ############################################################
 
-class CreditCardDataset(utils.Dataset):
+class DrivingLicenceDataset(utils.Dataset):
 
-    def load_credit_card(self, dataset_dir, subset):
+    def load_driving_licence(self, dataset_dir, subset):
         """Load a subset of the Balloon dataset.
         dataset_dir: Root directory of the dataset.
         subset: Subset to load: train or val
         """
         # Add classes. We have only one class to add.
-        self.add_class("credit_card", 1, "credit_card")
+        self.add_class("driving_licence", 1, "driving_licence")
 
         # Train or validation dataset?
         assert subset in ["train", "val"]
@@ -129,7 +129,7 @@ class CreditCardDataset(utils.Dataset):
             height, width = image.shape[:2]
 
             self.add_image(
-                "credit_card",
+                "driving_licence",
                 image_id=a['filename'],  # use file name as a unique image id
                 path=image_path,
                 width=width, height=height,
@@ -144,7 +144,7 @@ class CreditCardDataset(utils.Dataset):
         """
         # If not a balloon dataset image, delegate to parent class.
         image_info = self.image_info[image_id]
-        if image_info["source"] != "credit_card":
+        if image_info["source"] != "driving_licence":
             return super(self.__class__, self).load_mask(image_id)
 
         # Convert polygons to a bitmap mask of shape
@@ -164,7 +164,7 @@ class CreditCardDataset(utils.Dataset):
     def image_reference(self, image_id):
         """Return the path of the image."""
         info = self.image_info[image_id]
-        if info["source"] == "credit_card":
+        if info["source"] == "driving_licence":
             return info["path"]
         else:
             super(self.__class__, self).image_reference(image_id)
@@ -173,13 +173,13 @@ class CreditCardDataset(utils.Dataset):
 def train(model):
     """Train the model."""
     # Training dataset.
-    dataset_train = CreditCardDataset()
-    dataset_train.load_credit_card(args.dataset, "train")
+    dataset_train = DrivingLicenceDataset()
+    dataset_train.load_driving_licence(args.dataset, "train")
     dataset_train.prepare()
 
     # Validation dataset
-    dataset_val = CreditCardDataset()
-    dataset_val.load_credit_card(args.dataset, "val")
+    dataset_val = DrivingLicenceDataset()
+    dataset_val.load_driving_licence(args.dataset, "val")
     dataset_val.prepare()
 
     # *** This training schedule is an example. Update to your needs ***
@@ -208,8 +208,8 @@ if __name__ == '__main__':
                         metavar="<command>",
                         help="'train' or 'splash'")
     parser.add_argument('--dataset', required=False,
-                        metavar="/path/to/balloon/dataset/",
-                        help='Directory of the Balloon dataset')
+                        metavar="/path/to/dataset/",
+                        help='Directory of the dataset')
     parser.add_argument('--weights', required=False,
                         metavar="/path/to/weights.h5",
                         help="Path to weights .h5 file or 'coco'")
@@ -248,7 +248,8 @@ if __name__ == '__main__':
             utils.download_trained_weights(weights_path)
     elif args.weights.lower() == "last":
         # Find last trained weights
-        weights_path = model.find_last()
+        # weights_path = model.find_last()
+        weights_path = LAST_MODEL_WEIGHTS_PATH
     elif args.weights.lower() == "imagenet":
         # Start from ImageNet trained weights
         weights_path = model.get_imagenet_weights()

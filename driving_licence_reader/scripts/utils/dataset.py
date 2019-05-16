@@ -3,16 +3,12 @@ Work with datasets
 
 Written by Evgeniy Ryzhkov
 
-
--- splitting dataset to train and val datasets
--- creating train / val txt files
-
 ------------------------------------------------------------
 
 Usage:
 
     # Split datasets (datasets/filtered dir) into train and val datasets
-    python -m scripts.dataset --action=split_train_val_images
+    python - m scripts.dataset --action=split_train_val_images
 
 
 """
@@ -20,7 +16,6 @@ Usage:
 
 import http.client, urllib.parse, json
 import config.main as config
-import config.access as config_access
 import requests
 import time
 import os
@@ -32,21 +27,12 @@ import random
 
 class Dataset:
 
-    def __init__(self):
-        self.subscription_key = config_access.AZURE_SUBSCRIPTION_KEY
-        self.search_url = 'https://api.cognitive.microsoft.com/bing/v7.0/images/search'
-
-        self.downloaded_images_path = config.DOWNLADED_IMG_DIR
-        self.search_term = ['card visa'] # for diversity use different term 'debit card', 'card bank of america' and so on
-        self.images_amount_for_class = 300
 
     def run(self):
         try:
             user_arguments = self._get_command_line_arguments()
 
-            if user_arguments['action'] == 'download_images':
-                self._download_images_for_train()
-            elif user_arguments['action'] == 'split_train_val_images':
+            if user_arguments['action'] == 'split_train_val_images':
                 self._split_train_val_images()
             else:
                 print('Incorrect action type. You should choose one of possible values.')
@@ -61,16 +47,6 @@ class Dataset:
         args = vars(ap.parse_args())
         return args
 
-    def _download_images_for_train(self):
-        print('[INFO] Creating dataset...')
-        self._clear_directory(self.downloaded_images_path)
-        search_results = self._get_json(self.search_term)
-
-        url_images = gd_o.get_first_n_image_urls(search_results, n_images=self.images_amount_for_class)
-        self._parse_and_save_images(url_images, self.downloaded_images_path)
-
-        print('[OK] Images for train has been saved successfully into dir {}.'.format(self.downloaded_images_path))
-
     @staticmethod
     def _clear_directory(path):
         for root, dirs, files in os.walk(path):
@@ -79,51 +55,6 @@ class Dataset:
             for d in dirs:
                 shutil.rmtree(os.path.join(root, d))
 
-    def _get_json(self, search_term):
-        headers = {"Ocp-Apim-Subscription-Key": self.subscription_key}
-        offset = 0
-        n_grab_images = 0
-        value_results = []
-
-        while n_grab_images < self.images_amount_for_class:
-            params = {"q": search_term, "imageType": "photo", "offset": offset}
-            response = requests.get(self.search_url, headers=headers, params=params)
-            response.raise_for_status()
-            search_results = response.json()
-
-            value_field = search_results['value']
-            n_grab_images += len(value_field)
-            offset = search_results['nextOffset']
-            value_results += value_field
-
-            # print(json.dumps(search_results, indent=4, sort_keys=True))
-            # There is a limit on requests per sec for free azure account
-            time.sleep(1)
-
-        return value_results
-
-    @staticmethod
-    def _parse_and_save_images(url_images, dir_path):
-
-        file_name_pattern = 'img_'
-        file_name_ext = '.jpg'
-        start_idx = 122 # for increasing amount of dataset. take last number of image from current dataset
-
-        for idx, img in enumerate(url_images):
-            file = requests.get(img, timeout=30)
-            file_name = file_name_pattern + str(start_idx + idx) + file_name_ext
-            file_path = dir_path + file_name
-            print('[INFO] saving ' + file_name)
-
-            # write the image to disk
-            f = open(file_path, "wb")
-            f.write(file.content)
-            f.close()
-
-    @staticmethod
-    def get_first_n_image_urls(search_results, n_images):
-        image_urls = [img["contentUrl"] for img in search_results[:n_images]] # using big image as on small can't see guitars
-        return image_urls
 
     def _split_train_val_images(self):
         print('[INFO] Splitting filtered images to train and valid sets...')
@@ -141,7 +72,7 @@ class Dataset:
 
         self._copy_images(train_images_paths, config.TRAIN_IMG_DIR)
         self._copy_images(val_images_paths, config.VAL_IMG_DIR)
-        print('[OK] Train ({}) and validation ({}) images have been copied.'.format(n_train_size, n_val_size))
+        print('[OK] Train ({}) and validation ({}) images were copied.'.format(n_train_size, n_val_size))
 
     @staticmethod
     def _copy_images(img_list, new_dir_path):
