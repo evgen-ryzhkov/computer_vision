@@ -16,7 +16,7 @@ import base64
 
 class ImageProcessing:
 
-    def get_birds_eye_view_roi(self, instance_image):
+    def get_birds_eye_view_roi(self, full_image, image, roi_box):
         # algorithm:
         #   0. resize image to smaller size for better perfomance
         #   1. find the biggest contour
@@ -25,24 +25,65 @@ class ImageProcessing:
 
         # for increase work speed
         # maybe it will need to turn on
-        ratio = instance_image.shape[0] / 300.0
-        resized_image = imutils.resize(instance_image, height=960)
+        # ratio = instance_image.shape[0] / 300.0
+        # resized_image = imutils.resize(instance_image, height=960)
+        # -----Converting image to LAB Color model-----------------------------------
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        # cv2.imshow("lab", lab)
+        # cv2.waitKey(0)
 
-        biggest_contour = self._get_biggest_contour(resized_image)
+        # -----Splitting the LAB image to different channels-------------------------
+        l, a, b = cv2.split(lab)
+        # cv2.imshow('l_channel', l)
+        # cv2.waitKey(0)
+        # cv2.imshow('a_channel', a)
+        # cv2.waitKey(0)
+        # cv2.imshow('b_channel', b)
+        # cv2.waitKey(0)
+
+        # -----Applying CLAHE to L-channel-------------------------------------------
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        cl = clahe.apply(l)
+        # cv2.imshow('CLAHE output', cl)
+        # cv2.waitKey(0)
+
+        # -----Merge the CLAHE enhanced L-channel with the a and b channel-----------
+        limg = cv2.merge((cl, a, b))
+        # cv2.imshow('limg', limg)
+        # cv2.waitKey(0)
+
+        # -----Converting image from LAB Color model to RGB model--------------------
+        final = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+        # cv2.imshow('final', final)
+        # cv2.waitKey(0)
+
+        # return image
+        biggest_contour = self._get_biggest_contour(final)
         vertices = self._get_vertices(biggest_contour)
-        birds_eye_view_image = self._get_birds_eye_view_image(resized_image, vertices)
+        birds_eye_view_image = self._get_birds_eye_view_image(full_image, image, vertices, roi_box)
         return birds_eye_view_image
 
     def _get_biggest_contour(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         # remove high frequency noises
         gray = cv2.bilateralFilter(gray, 11, 17, 17)
-        lower, upper = self._get_canny_parameters(gray, sigma=0.5)
+
+        gray = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,11,2)
+        cv2.imshow("Theshold", gray)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+
+        lower, upper = self._get_canny_parameters(gray, sigma=0.35)
         edged = cv2.Canny(gray, lower, upper)
 
         # closed operation in order to contours was closed
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
+
+        cv2.imshow("Closed", closed)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
         # find the biggest contours in the edged image
         card_contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -55,6 +96,7 @@ class ImageProcessing:
         v = np.median(img_gray)
         lower = int(max(0, (1.0 - sigma) * v))
         upper = int(min(255, (1.0 + sigma) * v))
+        print("Lower, upper ", lower, upper)
         return lower, upper
 
     @staticmethod
@@ -65,7 +107,7 @@ class ImageProcessing:
         return box
 
     @staticmethod
-    def _get_birds_eye_view_image(image, four_points):
+    def _get_birds_eye_view_image(full_image, image, four_points, roi_box):
         # for this prototype it required that card will be in album view
         # there is no processing for portrait view
 
@@ -85,11 +127,18 @@ class ImageProcessing:
 
         # look for debugging
         # point colors - BGR format
-        # cv2.circle(image, (top_left[0], top_left[1]), 5, (255, 0, 0), -1)           # blue
-        # cv2.circle(image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)   # green
-        # cv2.circle(image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)         # red
-        # cv2.circle(image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)   # yellow
-        # cv2.imshow("The vertices", image)
+        cv2.circle(image, (top_left[0], top_left[1]), 5, (255, 0, 0), -1)  # blue
+        cv2.circle(image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)  # green
+        cv2.circle(image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)  # red
+        cv2.circle(image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)  # yellow
+        cv2.imshow("The vertices image_instance", image)
+        cv2.waitKey(0)
+
+        # cv2.circle(full_image, (top_left[0], top_left[1]), 5, (255, 0, 0), -1)  # blue
+        # cv2.circle(full_image, (bottom_right[0], bottom_right[1]), 5, (0, 255, 0), -1)  # green
+        # cv2.circle(full_image, (top_right[0], top_right[1]), 5, (0, 0, 255), -1)  # red
+        # cv2.circle(full_image, (bottom_left[0], bottom_left[1]), 5, (0, 255, 255), -1)  # yellow
+        # cv2.imshow("The vertices image_instance", full_image)
         # cv2.waitKey(0)
 
         # compute the width of the new image, which will be the
@@ -116,6 +165,7 @@ class ImageProcessing:
 
         transform_matrix = cv2.getPerspectiveTransform(input_vertices, output_vertices)
         birds_eye_view_image = cv2.warpPerspective(image, transform_matrix, (max_width, max_height))
+
 
         return birds_eye_view_image
 

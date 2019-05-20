@@ -33,23 +33,31 @@ class MaskRCNN:
             roi_box = first_credit_card_instance['roi']
             mask = first_credit_card_instance['mask']
 
+
             # maybe it could be done easier
             # convert the mask from a boolean to an integer mask with
             # to values: 0 or 255, then apply the mask
-            # vis_mask = (mask * 255).astype("uint8")
-            # masked_img = cv2.bitwise_and(image, image, mask=vis_mask)
+            vis_mask = (mask * 255).astype("uint8")
+            masked_img = cv2.bitwise_and(image, image, mask=vis_mask)
+
+            # cv2.imshow("Theshold", masked_img)
+            # cv2.waitKey(0)
+            # cv2.destroyAllWindows()
 
             # getting object roi
             # for better capture of the documents, do some increasing of roi_box
             start_delta = 40
             img_h, img_w, _ = image.shape
             delta_roi_box = self._get_optimal_delta_roi_box(roi_box, start_delta, img_h, img_w)
-            # object_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
-            object_instance = image[delta_roi_box[0]:delta_roi_box[2], delta_roi_box[1]:delta_roi_box[3]]
+            object_instance = masked_img[roi_box[0]:roi_box[2], roi_box[1]:roi_box[3]]
+            roi_box = image[delta_roi_box[0]:delta_roi_box[2], delta_roi_box[1]:delta_roi_box[3]]
+            # object_instance = masked_img
+            object_instance = roi_box
         else:
             object_instance = []
+            roi_box = []
 
-        return object_instance
+        return object_instance, roi_box
 
     def _get_optimal_delta_roi_box(self, roi_box, delta, img_h, img_w):
         delta_roi_box = np.copy(roi_box)

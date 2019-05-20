@@ -22,42 +22,87 @@ import numpy as np
 import cv2
 import imutils
 import re
+import pytesseract
 
 # Nets
 from scripts.nets.mask_rcnn import MaskRCNN
+from scripts.nets.east import EastTextDetection
 # from scripts.nets.east import EastTextDetection
-# from scripts.nets.google_vision import GoogleVision
+from scripts.nets.google_vision import GoogleVision
 
 # Some addition utilities
 from scripts.utils.image_processing import ImageProcessing
 
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+from matplotlib import colors
+from matplotlib.colors import hsv_to_rgb
 
 class DrivingLicenceReader():
 
     def __init__(self):
         self.image_pros = ImageProcessing()
-        # self.google_vision = GoogleVision()
+        self.google_vision = GoogleVision()
 
     def read_card(self):
         print('[INFO] Loading input image...')
         input_image = self._get_input_image()
 
         print('[INFO] Getting driving licence instance ...')
-        mask_rcnn = MaskRCNN()
-        instance_image = mask_rcnn.get_object_instance(image=input_image)
-        if len(instance_image) == 0:
-            print('[INFO] Driving licence has not been found.')
-            exit()
+        # mask_rcnn = MaskRCNN()
+        # instance_image, roi_box = mask_rcnn.get_object_instance(image=input_image)
+        # if len(instance_image) == 0:
+        #     print('[INFO] Driving licence has not been found.')
+        #     exit()
 
-        cv2.imshow("Result", instance_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        print('result')
+        # cv2.imshow("Roi box", roi_box)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
+        # todo going to try to regulate card position by the interface
         # print('[INFO] Preparing card instance image for text reading...')
-        # prepared_card_image = self._prepare_card_for_text_reading(card_image)
+        # prepared_card_image = self._prepare_card_for_text_reading(input_image, instance_image, roi_box)
         #
-        # print('[INFO] Card reading...')
-        # card_number, expiry_date = self._get_card_number_and_valid_date(prepared_card_image)
+        # cv2.imshow("Result", prepared_card_image)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        roi_box = input_image
+
+        gray = cv2.cvtColor(roi_box, cv2.COLOR_BGR2GRAY)
+
+        # denosing
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+
+        # lightning dark pieces (text is black)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+
+        ret3, th3 = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 1))
+        connected = cv2.morphologyEx(th3, cv2.MORPH_CLOSE, kernel)
+
+        # cv2.imshow("After closing", connected)
+        # cv2.waitKey(0)
+
+
+        self._get_usefull_text_roi(connected, roi_box)
+        # cv2.imshow("Theshold debugging", thres_2)
+        # cv2.waitKey(0)
+        #
+        # res = cv2.bitwise_and(roi_box, roi_box, mask=mask)
+        # gray = cv2.cvtColor(roi_box, cv2.COLOR_BGR2GRAY)
+        # gray = cv2.bilateralFilter(gray, 11, 17, 17)
+        # rude option
+        # ret, res = cv2.threshold(gray, 0, 50, cv2.THRESH_BINARY)
+
+        # cv2.imshow("Threshold by color", roi_box)
+        # cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+        #
+        # print('[INFO] Document reading...')
+        # data = self._get_card_data(res)
         #
         # print('\n[OK] Card reading has been finished successfully:')
         # print('-- Card number = {}\n-- Expiry date = {}'.format(card_number, expiry_date))
@@ -81,6 +126,18 @@ class DrivingLicenceReader():
         except:
             print('[ERROR] Image file not found or can not be read.')
             exit()
+
+
+    def _get_usefull_text_roi(self, thresh_image, image):
+        all_contours, _ = cv2.findContours(thresh_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in all_contours:
+            (x, y, w, h) = cv2.boundingRect(c)
+            if w > 20 and h > 20:
+                cv2.rectangle(image, (x, y), (x + w-1, y + h-1), (0, 255, 0), 1)
+
+        cv2.imshow("Text boxes", image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
     @staticmethod
     def _visualize_result(input_image, card_number, expiry_date):
@@ -110,10 +167,11 @@ class DrivingLicenceReader():
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    def _prepare_card_for_text_reading(self, card_instance):
+    def _prepare_card_for_text_reading(self, input_image, card_instance, roi_box):
         # getting bird eye view of credit card for better text reading
-        instance_with_background_around = self._add_background_around_instance_roi(card_instance)
-        bird_eye_view_instance = self.image_pros.get_birds_eye_view_roi(instance_image=instance_with_background_around)
+        # instance_with_background_around = self._add_background_around_instance_roi(card_instance)
+        instance_with_background_around = card_instance
+        bird_eye_view_instance = self.image_pros.get_birds_eye_view_roi(full_image=input_image, image=instance_with_background_around, roi_box=roi_box)
         return bird_eye_view_instance
 
     @staticmethod
@@ -135,6 +193,25 @@ class DrivingLicenceReader():
         instance_with_background_around[20:instance_img_height+20, 20:instance_img_width+20] = instance_img
 
         return instance_with_background_around
+
+    def _get_card_data(self, image):
+        east_text_detector = EastTextDetection()
+        all_text_boxes_on_document = east_text_detector.get_text_boxes(image=image)
+
+        # prepare image for google vision
+        # image_base64 = self.image_pros.convert_img_to_base64(image)
+        #
+        # all_text_boxes_on_document = self.google_vision.read_text_from_image(image_base64)
+
+        img_copy = image.copy()
+        for box in all_text_boxes_on_document:
+            cv2.rectangle(img_copy, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+        cv2.imshow('TEXT boxes', img_copy)
+        cv2.waitKey(0)
+
+
+
+        return 'debugging'
 
     def _get_card_number_and_valid_date(self, image):
         east_text_detector = EastTextDetection()
