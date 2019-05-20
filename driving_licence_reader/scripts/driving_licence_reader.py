@@ -82,11 +82,14 @@ class DrivingLicenceReader():
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 1))
         connected = cv2.morphologyEx(th3, cv2.MORPH_CLOSE, kernel)
 
-        # cv2.imshow("After closing", connected)
+        # cv2.imshow("After closing", th3)
         # cv2.waitKey(0)
 
 
-        self._get_usefull_text_roi(connected, roi_box)
+        useful_text_roi = self._get_usefull_text_roi(connected, roi_box)
+        last_name, first_name = self._get_name(useful_text_roi, gray)
+
+        print('Name = {} {}'.format(last_name, first_name))
         # cv2.imshow("Theshold debugging", thres_2)
         # cv2.waitKey(0)
         #
@@ -127,17 +130,106 @@ class DrivingLicenceReader():
             print('[ERROR] Image file not found or can not be read.')
             exit()
 
-
-    def _get_usefull_text_roi(self, thresh_image, image):
+    @staticmethod
+    def _get_usefull_text_roi(thresh_image, image):
         all_contours, _ = cv2.findContours(thresh_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        useful_text_roi = []
+        image_c = image.copy()
         for c in all_contours:
             (x, y, w, h) = cv2.boundingRect(c)
-            if w > 20 and h > 20:
-                cv2.rectangle(image, (x, y), (x + w-1, y + h-1), (0, 255, 0), 1)
+            delta = 5
+            x -= delta
+            y -= delta
+            w = w + 2*delta
+            h = h + 2*delta
+            if w > (20 + 2*delta) and h > (20 + 2*delta) and h < 70:
+                cv2.rectangle(image_c, (x, y), (x + w-1, y + h-1), (0, 255, 0), 1)
+                useful_text_roi.append((x, y, w, h))
 
-        cv2.imshow("Text boxes", image)
+        # cv2.imshow("Text boxes", image_c)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
+        return useful_text_roi
+
+    @staticmethod
+    def _get_name(text_roi_arr, image):
+        last_name = '??'
+
+        # looking for document row number by size
+        row_numbers = []
+        image_c_1 = image.copy()
+        print(text_roi_arr[0])
+        for text in text_roi_arr:
+            aspect_ratio = text[2] / text[3]
+            if aspect_ratio > 0.9 and aspect_ratio < 2:
+                row_numbers.append(text)
+                # cv2.rectangle(image_c_1, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
+
+        # cv2.imshow("Numbers", image_c_1)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
+        # looking for 1.
+
+        # image_spec = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,5,2)
+        # blur = cv2.GaussianBlur(image, (3, 3), 0)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        blackhat = cv2.morphologyEx(image, cv2.MORPH_BLACKHAT, kernel)
+        _, image_spec = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        # cv2.imshow("Numbers thresh", image_spec)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        row_1_top = 0
+        row_2_top = 0
+        row_3_top = 0
+        numbers_vertical_line = 0
+        for number in row_numbers:
+            x0 = number[1]-5
+            x1 = number[1] + number[3] + 5
+            y0 = number[0]
+            y1 = number[0] + number[2]
+            img_number = image_spec[x0:x1, y0:y1]
+            text_number = pytesseract.image_to_string(img_number, config='-c tessedit_char_whitelist=1234567890 --psm 10')
+            # sometimes tesseract read '.' as ','
+            text_number = re.sub(r",", ".", text_number)
+
+            if text_number == '1.':
+                row_1_top = number[1]
+                print('row_1_top =', row_1_top)
+                numbers_vertical_line = number[0]
+                print('vertical line =', numbers_vertical_line)
+            if text_number == '2.':
+                row_2_top = number[1]
+                print('row_2_top =', row_2_top)
+            if text_number == '3.':
+                row_3_top = number[0]
+            # print(text_number)
+            # cv2.imshow("Numbers", img_number)
+            # cv2.waitKey(0)
+            # cv2.destroyWindow("Numbers")
+
+        # last name lays between row_1_top and row_2_top
+        # and not far right (<100px) from numbers vertical line
+        img_c_2 = image_spec.copy()
+        for text in text_roi_arr:
+            text_top_corner = text[1]
+            text_left_corner = text[0]
+            # text_bottom_corner =
+            delta = 10
+
+            if (text_top_corner + delta) > row_1_top and \
+               (text_top_corner + delta) < row_2_top and \
+               text_left_corner - numbers_vertical_line < 100 and \
+                    text_left_corner - numbers_vertical_line > 50:
+                cv2.rectangle(img_c_2, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1),
+                              (0, 255, 0), 1)
+        cv2.imshow("Last name", img_c_2)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
+        first_name = '??'
+        return last_name, first_name
 
     @staticmethod
     def _visualize_result(input_image, card_number, expiry_date):
