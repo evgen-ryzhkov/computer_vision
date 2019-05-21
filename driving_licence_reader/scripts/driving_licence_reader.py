@@ -14,7 +14,6 @@ Usage:
 
 """
 
-# import config.access as access_config
 import config.main as main_config
 
 import argparse
@@ -23,13 +22,10 @@ import cv2
 import imutils
 import re
 import pytesseract
-from operator import itemgetter, attrgetter
+from operator import itemgetter
 
 # Nets
 from scripts.nets.mask_rcnn import MaskRCNN
-from scripts.nets.east import EastTextDetection
-# from scripts.nets.east import EastTextDetection
-from scripts.nets.google_vision import GoogleVision
 
 # Some addition utilities
 from scripts.utils.image_processing import ImageProcessing
@@ -40,80 +36,42 @@ from matplotlib import cm
 from matplotlib import colors
 from matplotlib.colors import hsv_to_rgb
 
+
 class DrivingLicenceReader():
 
     def __init__(self):
         self.image_pros = ImageProcessing()
-        self.google_vision = GoogleVision()
 
     def read_card(self):
         print('[INFO] Loading input image...')
         input_image = self._get_input_image()
 
         print('[INFO] Getting driving licence instance ...')
-        # mask_rcnn = MaskRCNN()
-        # instance_image, roi_box = mask_rcnn.get_object_instance(image=input_image)
-        # if len(instance_image) == 0:
-        #     print('[INFO] Driving licence has not been found.')
-        #     exit()
+        mask_rcnn = MaskRCNN()
+        instance_image, roi_box = mask_rcnn.get_object_instance(image=input_image)
+        if len(instance_image) == 0:
+            print('[INFO] Driving licence has not been found.')
+            exit()
 
         # cv2.imshow("Roi box", roi_box)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
 
         # todo going to try to regulate card position by the interface
-        # print('[INFO] Preparing card instance image for text reading...')
-        # prepared_card_image = self._prepare_card_for_text_reading(input_image, instance_image, roi_box)
+        print('[INFO] Card instance image processing for text reading...')
+        processed_roi_box = self._prepare_card_for_text_reading(input_image, instance_image, roi_box)
         #
         # cv2.imshow("Result", prepared_card_image)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
 
         print('[INFO] Reading driver data ...')
-        roi_box = input_image
-
-        gray = cv2.cvtColor(roi_box, cv2.COLOR_BGR2GRAY)
-
-        # denosing
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-
-        # lightning dark pieces (text is black)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
-
-        ret3, th3 = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 1))
-        connected = cv2.morphologyEx(th3, cv2.MORPH_CLOSE, kernel)
-
-        # cv2.imshow("After closing", th3)
-        # cv2.waitKey(0)
-
-
-        useful_text_roi = self._get_usefull_text_roi(connected, roi_box)
-        last_name, first_name, birth_date, id_driving_licence = self._get_name(useful_text_roi, gray)
+        # roi_box = input_image
+        useful_text_rois = self._get_useful_text_roi(brg_img=processed_roi_box)
+        last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(useful_text_rois, roi_box)
 
         print('[OK] Driving licence has been read. Driver data:')
         print('Name = {} {}\nBirth date = {}\nID driving licence = {}'.format(last_name, first_name, birth_date, id_driving_licence))
-        # cv2.imshow("Theshold debugging", thres_2)
-        # cv2.waitKey(0)
-        #
-        # res = cv2.bitwise_and(roi_box, roi_box, mask=mask)
-        # gray = cv2.cvtColor(roi_box, cv2.COLOR_BGR2GRAY)
-        # gray = cv2.bilateralFilter(gray, 11, 17, 17)
-        # rude option
-        # ret, res = cv2.threshold(gray, 0, 50, cv2.THRESH_BINARY)
-
-        # cv2.imshow("Threshold by color", roi_box)
-        # cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-        #
-        # print('[INFO] Document reading...')
-        # data = self._get_card_data(res)
-        #
-        # print('\n[OK] Card reading has been finished successfully:')
-        # print('-- Card number = {}\n-- Expiry date = {}'.format(card_number, expiry_date))
-        # self._visualize_result(input_image, card_number, expiry_date)
 
     @staticmethod
     def _get_command_line_arguments():
@@ -135,10 +93,26 @@ class DrivingLicenceReader():
             exit()
 
     @staticmethod
-    def _get_usefull_text_roi(thresh_image, image):
-        all_contours, _ = cv2.findContours(thresh_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    def _get_useful_text_roi(brg_img):
+
+        # some processing
+        gray = cv2.cvtColor(brg_img, cv2.COLOR_BGR2GRAY)
+
+        # -- lightning dark pieces (text is black)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+
+        _, thresh = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # -- for better searching of rectangular elements
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 1))
+        connected_tresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+        # getting contours
+        all_contours, _ = cv2.findContours(connected_tresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         useful_text_roi = []
-        image_c = image.copy()
+
+        # filtering found contours by size
         for c in all_contours:
             (x, y, w, h) = cv2.boundingRect(c)
             delta = 5
@@ -147,164 +121,25 @@ class DrivingLicenceReader():
             w = w + 2*delta
             h = h + 2*delta
             if w > (20 + 2*delta) and h > (20 + 2*delta) and h < 70:
-                # cv2.rectangle(image_c, (x, y), (x + w-1, y + h-1), (0, 255, 0), 1)
                 useful_text_roi.append((x, y, w, h))
-
-        # cv2.imshow("Text boxes", image_c)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
 
         return useful_text_roi
 
-    @staticmethod
-    def _get_name(text_roi_arr, image):
-        last_name = '??'
+    def _get_driver_data(self, text_roi_arr, brg_img):
 
-        # looking for document row number by size
-        row_numbers = []
-        image_c_1 = image.copy()
+        # for better OCR do some processing
+        processed_img = self._get_processed_image_for_text_reading(brg_img)
 
-        for text in text_roi_arr:
-            aspect_ratio = text[2] / text[3]
-            if aspect_ratio > 0.9 and aspect_ratio < 2:
-                row_numbers.append(text)
-                # cv2.rectangle(image_c_1, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
+        # useful data are located against row numbers and nearby them
+        # so find document row numbers and save their coordinates
+        row_1_top, row_2_top, row_3_top, row_5_top, numbers_vertical_line\
+            = self._get_row_coordinates(text_roi_arr, processed_img)
 
-        # cv2.imshow("Numbers", image_c_1)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
+        # finding of necessary text boxes among all roi text boxes
+        driver_data_boxes = self._get_driver_data_boxes(text_roi_arr, row_1_top, row_2_top, row_3_top, row_5_top, numbers_vertical_line)
 
-        # looking for numbers by aspect ratio
-        # then by reading and filtering by values = '1.', '2.', '3.'
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        blackhat = cv2.morphologyEx(image, cv2.MORPH_BLACKHAT, kernel)
-
-        # cv2.imshow("Numbers blackhat", blackhat)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
-        _, image_spec = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        # cv2.imshow("Numbers thresh", image_spec)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
-        # remove some noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        closed = cv2.morphologyEx(image_spec, cv2.MORPH_CLOSE, kernel)
-        # cv2.imshow("Numbers opened", closed)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
-        row_1_top, row_2_top, row_3_top, row_5_top = 0, 0, 0, 0
-        numbers_vertical_line = 0
-
-        for number in row_numbers:
-            x0 = number[1]-5
-            x1 = number[1] + number[3] + 5
-            y0 = number[0]
-            y1 = number[0] + number[2]
-            img_number = closed[x0:x1, y0:y1]
-            text_number = pytesseract.image_to_string(img_number, config='-c tessedit_char_whitelist=1234567890 --psm 10')
-            # sometimes tesseract read '.' as ','
-            text_number = re.sub(r",", ".", text_number)
-
-            if text_number == '1.':
-                row_1_top = number[1]
-                numbers_vertical_line = number[0]
-            if text_number == '2.':
-                row_2_top = number[1]
-            if text_number == '3.':
-                row_3_top = number[1]
-            if text_number == '5.':
-                row_5_top = number[1]
-            # print(text_number)
-            # cv2.imshow("Numbers", img_number)
-            # cv2.waitKey(0)
-            # cv2.destroyWindow("Numbers")
-
-        if row_1_top == 0 or \
-            row_2_top == 0 or \
-            row_3_top == 0 or \
-            row_5_top == 0:
-            print('[INFO] Number rows have not been read.')
-            exit()
-
-        # finding names roi
-        img_c_2 = image_spec.copy()
-
-        first_name_applicants = []
-        latin_last_name_box, birth_date_box, id_driving_licence_box = (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)
-        delta_row = 10  # take into account some error of text box positions
-        delta_v_line_low = 10
-        delta_v_line_high = 100
-
-        for text in text_roi_arr:
-            text_top_corner = text[1]
-            text_left_corner = text[0]
-            text_left_corner_minus_v_line = text_left_corner - numbers_vertical_line
-
-            # all needed data are not far right (<100px) from numbers vertical line
-            if text_left_corner_minus_v_line < delta_v_line_high and \
-               text_left_corner_minus_v_line > delta_v_line_low:
-
-                # finding last name
-                # last name lays between row_1_top and row_2_top
-                # we need only latin name
-                # latin name is lower in the row
-                if (text_top_corner + delta_row) > row_1_top and \
-                   (text_top_corner + delta_row) < row_2_top and \
-                   text_top_corner > latin_last_name_box[1]:
-                    latin_last_name_box = text
-
-                # finding first name step 1 - getting applicants from 2nd rows
-                # first name lays between row_2_top and row_3_top
-                # we need only latin name
-                # latin name is always on the 2nd substring of the first name section
-                if (text_top_corner + delta_row) > row_2_top and \
-                   (text_top_corner + delta_row) < row_3_top:
-                    first_name_applicants.append(text)
-
-                # finding birth date
-                # it lays in 3rd row and nearby number of the row (3.)
-                if text_top_corner > (row_3_top - delta_row) and \
-                   text_top_corner < (row_3_top + delta_row):
-                    birth_date_box = text
-
-                # finding id driving licence
-                # it lays in 5rd row and nearby number of the row (5.)
-                if text_top_corner > (row_5_top - delta_row) and \
-                   text_top_corner < (row_5_top + delta_row):
-                    id_driving_licence_box = text
-
-
-        # getting first name step 2
-        # getting second substrings by second value of y coordinate of top lef corner
-        # print('Pret before sort ', first_name_applicants)
-        min_y_coordinate = min(x[1] for x in first_name_applicants)
-        # print('min_v=', min_v)
-        first_name_applicants = [x for x in first_name_applicants if x[1] > min_y_coordinate]
-        # print('Pret after delete', first_name_pret)
-        first_name_applicants = sorted(first_name_applicants, key=itemgetter(1))
-        # print('Pret after sort', first_name_pret)
-        latin_first_name_box = first_name_applicants[0]
-
-        user_data_box = []
-        user_data_box.append(latin_last_name_box)
-        user_data_box.append(latin_first_name_box)
-        user_data_box.append(birth_date_box)
-        user_data_box.append(id_driving_licence_box)
-
-        user_data = []
-        for box in user_data_box:
-            x0 = box[1]
-            x1 = box[1] + box[3]
-            y0 = box[0]
-            y1 = box[0] + box[2]
-            img_roi = closed[x0:x1, y0:y1]
-            user_data.append(pytesseract.image_to_string(img_roi, config='--psm 8'))
-
-        # print(user_data)
+        # reading text from driver data image boxes by tesseract
+        last_name, first_name, birth_date, id_driving_licence = self._ocr_driver_data(processed_img, driver_data_boxes)
 
         # cv2.rectangle(closed, (latin_last_name_box[0], latin_last_name_box[1]),
         #               (latin_last_name_box[0] + latin_last_name_box[2] - 1, latin_last_name_box[1] + latin_last_name_box[3] - 1),
@@ -327,10 +162,6 @@ class DrivingLicenceReader():
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
 
-        last_name = user_data[0]
-        first_name = user_data[1]
-        birth_date = user_data[2]
-        id_driving_licence = user_data[3]
         return last_name, first_name, birth_date, id_driving_licence
 
     @staticmethod
@@ -388,207 +219,150 @@ class DrivingLicenceReader():
 
         return instance_with_background_around
 
-    def _get_card_data(self, image):
-        east_text_detector = EastTextDetection()
-        all_text_boxes_on_document = east_text_detector.get_text_boxes(image=image)
+    @staticmethod
+    def _get_processed_image_for_text_reading(brg_img):
 
-        # prepare image for google vision
-        # image_base64 = self.image_pros.convert_img_to_base64(image)
-        #
-        # all_text_boxes_on_document = self.google_vision.read_text_from_image(image_base64)
+        gray = cv2.cvtColor(brg_img, cv2.COLOR_BGR2GRAY)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
 
-        img_copy = image.copy()
-        for box in all_text_boxes_on_document:
-            cv2.rectangle(img_copy, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-        cv2.imshow('TEXT boxes', img_copy)
-        cv2.waitKey(0)
+        _, image_spec = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
+        # remove some noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        closed = cv2.morphologyEx(image_spec, cv2.MORPH_CLOSE, kernel)
 
-
-        return 'debugging'
-
-    def _get_card_number_and_valid_date(self, image):
-        east_text_detector = EastTextDetection()
-        all_text_boxes_on_card = east_text_detector.get_text_boxes(image=image)
-
-        card_number_text_boxes = self._get_card_number_boxes(all_text_boxes_on_card)
-
-        # for request to google api reducing
-        # joint numbers as one image
-        big_roi_11 = card_number_text_boxes[0][1]
-        big_roi_12 = card_number_text_boxes[3][3]
-        big_roi_21 = card_number_text_boxes[0][0]
-        big_roi_22 = card_number_text_boxes[3][2]
-        card_number_joint_roi = image[big_roi_11:big_roi_12, big_roi_21:big_roi_22]
-
-        valid_date_text_boxes = self._get_valid_date_boxes(all_text_boxes_on_card, card_number_text_boxes, image)
-        valid_date_roi_arr = []
-        for box in valid_date_text_boxes:
-            roi = image[box[1]:box[3], box[0]:box[2]]
-            valid_date_roi_arr.append(roi)
-
-        print('-- [INFO] reading card number by Google vision...')
-        # prepare image for google vision
-        card_number_joint_roi_base64 = self.image_pros.convert_img_to_base64(card_number_joint_roi)
-
-        card_number = self.google_vision.read_text_from_image(card_number_joint_roi_base64)
-        if card_number != '':
-            # sometimes result of text reading by Google vision isn't look nice
-            formatted_card_number = self._format_card_number(card_number)
-        else:
-            formatted_card_number = 'Card number has not been read.'
-
-        expiry_date = self._get_expiry_date(valid_date_roi_arr)
-        if expiry_date == '':
-            expiry_date = '[INFO] Expiry date has not been read.'
-
-        return formatted_card_number, expiry_date
+        return closed
 
     @staticmethod
-    def _get_card_number_boxes(boxes_list):
-        # card number boxes are:
-        # -- four boxes
-        # -- y_top_left_corner are approximately equal (in range some small delta)
-        # -- width and height are approximately equal
-        # -- order boxes depends from x_top_left_corners
+    def _get_row_coordinates(text_roi_arr, processed_img):
 
-        card_number_boxes = None
-        y_top_left_corner_delta = 20
-        wh_delta = 25
+        # first find roi are similar row numbers
+        row_numbers = []
+        # image_c_1 = brg_img.copy()
 
-        # find 4 boxes with equal top left corners
-        for idx, box in enumerate(boxes_list):
-            top_left_corner = box[1]
-            box_w =  box[2] - box[0]
-            box_h = box[3] - box[1]
+        for text in text_roi_arr:
+            aspect_ratio = text[2] / text[3]
+            if aspect_ratio > 0.9 and aspect_ratio < 2:
+                row_numbers.append(text)
+                # cv2.rectangle(image_c_1, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
 
-            card_number_boxes = []
-            card_number_boxes.append(box)
-            boxes_count = 1
+        row_1_top, row_2_top, row_3_top, row_5_top = 0, 0, 0, 0
+        numbers_vertical_line = 0
 
-            boxes_list_without_current_box = boxes_list.copy()
-            del boxes_list_without_current_box[idx]
+        for number in row_numbers:
+            x0 = number[1] - 5
+            x1 = number[1] + number[3] + 5
+            y0 = number[0]
+            y1 = number[0] + number[2]
+            img_number = processed_img[x0:x1, y0:y1]
+            text_number = pytesseract.image_to_string(img_number,
+                                                      config='-c tessedit_char_whitelist=1234567890 --psm 10')
+            # sometimes tesseract read '.' as ','
+            text_number = re.sub(r",", ".", text_number)
 
-            for box_2 in boxes_list_without_current_box:
-                top_left_corner_2 = box_2[1]
-                box_w_2 = box_2[2] - box_2[0]
-                box_h_2 = box_2[3] - box_2[1]
+            if text_number == '1.':
+                row_1_top = number[1]
+                numbers_vertical_line = number[0]
+            if text_number == '2.':
+                row_2_top = number[1]
+            if text_number == '3.':
+                row_3_top = number[1]
+            if text_number == '5.':
+                row_5_top = number[1]
 
-                if abs(top_left_corner - top_left_corner_2) <= y_top_left_corner_delta and \
-                   abs(box_w - box_w_2) <= wh_delta and \
-                   abs(box_h - box_h_2) <= wh_delta:
-                    boxes_count += 1
-                    card_number_boxes.append(box_2)
+        if row_1_top == 0 or \
+                row_2_top == 0 or \
+                row_3_top == 0 or \
+                row_5_top == 0:
+            print('[INFO] Number rows have not been read.')
+            exit()
 
-                if boxes_count == 4:
-                    break
-
-            if boxes_count == 4:
-                break
-
-        # sort card number boxes in order from left to right by x coordinate on top left corner
-        # for easier operation it needs to transform array to numpy array
-        sorted_card_number_boxes = np.array(card_number_boxes)
-        col = 0
-        sorted_card_number_boxes = sorted_card_number_boxes[np.argsort(sorted_card_number_boxes[:, col])]
-
-        return sorted_card_number_boxes
+        return row_1_top, row_2_top, row_3_top, row_5_top, numbers_vertical_line
 
     @staticmethod
-    def _get_valid_date_boxes(boxes_list, card_number_text_boxes, image):
-        # expiry date box is:
-        # -- not card number box (located below)
-        # -- side ratio in range 2.2 - 3.6 (was chosen experimentally)
-        # -- contains symbol '/' - it will check OCR
-        # -- if two blocks on the same line - choose the righter one
+    def _get_driver_data_boxes(text_roi_arr, row_1_top, row_2_top, row_3_top, row_5_top, numbers_vertical_line):
+        # img_c_2 = brg_img.copy()
 
-        # find bottom line of card_numbers
-        # it's max of bottom right corner
-        y_bottom_right_corners = card_number_text_boxes[:, [3]]
-        card_number_bottom_line = np.amax(y_bottom_right_corners)
+        first_name_applicants = []
+        latin_last_name_box, birth_date_box, id_driving_licence_box = (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)
+        delta_row = 10  # take into account some error of text box positions
+        delta_v_line_low = 10
+        delta_v_line_high = 100
 
-        valid_date_candidate_boxes = []
-        for box in boxes_list:
-            box_y_top_coordinate = box[1]
+        for text in text_roi_arr:
+            text_top_corner = text[1]
+            text_left_corner = text[0]
+            text_left_corner_minus_v_line = text_left_corner - numbers_vertical_line
 
-            if box_y_top_coordinate > card_number_bottom_line:
-                box_w = box[2] - box[0]
-                box_h = box[3] - box[1]
-                box_aspect_ratio = box_w / box_h
-                if box_aspect_ratio >= 2.2 and \
-                   box_aspect_ratio < 3.6:
-                    valid_date_candidate_boxes.append(box)
+            # all needed data are not far right (<100px) from numbers vertical line
+            if text_left_corner_minus_v_line < delta_v_line_high and \
+                    text_left_corner_minus_v_line > delta_v_line_low:
 
-        return valid_date_candidate_boxes
+                # finding last name
+                # last name lays between row_1_top and row_2_top
+                # we need only latin name
+                # latin name is lower in the row
+                if (text_top_corner + delta_row) > row_1_top and \
+                        (text_top_corner + delta_row) < row_2_top and \
+                        text_top_corner > latin_last_name_box[1]:
+                    latin_last_name_box = text
 
-    @staticmethod
-    def _format_card_number(card_number):
-        # remove spaces and some noise characters for good formatting
-        noise = '[ ,_.]'
-        card_number_without_spaces = re.sub(noise, '', card_number)
-        formated_card_number = card_number_without_spaces[:4] + ' ' + card_number_without_spaces[4:8] + ' ' + \
-                               card_number_without_spaces[8:12] + ' ' + card_number_without_spaces[12:16]
+                # finding first name step 1 - getting applicants from 2nd rows
+                # first name lays between row_2_top and row_3_top
+                # we need only latin name
+                # latin name is always on the 2nd substring of the first name section
+                if (text_top_corner + delta_row) > row_2_top and \
+                        (text_top_corner + delta_row) < row_3_top:
+                    first_name_applicants.append(text)
 
-        return formated_card_number
+                # finding birth date
+                # it lays in 3rd row and nearby number of the row (3.)
+                if text_top_corner > (row_3_top - delta_row) and \
+                        text_top_corner < (row_3_top + delta_row):
+                    birth_date_box = text
 
-    def _get_expiry_date(self, roi_arr):
-        # for google api requests reducing
-        # joint candidates roi into one roi
-        joint_roi = self._joint_expiry_date_roi(roi_arr)
-        joint_roi_base64 = self.image_pros.convert_img_to_base64(joint_roi)
-        canditate_texts =  self.google_vision.read_text_from_image(joint_roi_base64)
-        expiry_date = self._find_expiry_date_among_candidates(canditate_texts)
-        return expiry_date
+                # finding id driving licence
+                # it lays in 5rd row and nearby number of the row (5.)
+                if text_top_corner > (row_5_top - delta_row) and \
+                        text_top_corner < (row_5_top + delta_row):
+                    id_driving_licence_box = text
 
-    @staticmethod
-    def _joint_expiry_date_roi(roi_arr):
-        # joint_roi_cols = max width among roi + borders_paddings*2 (both side)
-        # joint_roi_rows = sum height of all roi + borders_paddings (top side) + joint_roi_space_between_rows * roi_cols
-        joint_roi_rows = 0
-        joint_roi_cols = 0
-        joint_roi_space_between_rows = 20
-        joint_roi_space_borders_paddings = 20
+        # getting first name step 2
+        # getting second substrings by second value of y coordinate of top lef corner
+        # print('Pret before sort ', first_name_applicants)
+        min_y_coordinate = min(x[1] for x in first_name_applicants)
+        # print('min_v=', min_v)
+        first_name_applicants = [x for x in first_name_applicants if x[1] > min_y_coordinate]
+        # print('Pret after delete', first_name_pret)
+        first_name_applicants = sorted(first_name_applicants, key=itemgetter(1))
+        # print('Pret after sort', first_name_pret)
+        latin_first_name_box = first_name_applicants[0]
 
-        for roi in roi_arr:
-            roi_w = roi.shape[1]
-            roi_h = roi.shape[0]
-            if roi_w > joint_roi_cols:
-                joint_roi_cols = roi_w
-            joint_roi_rows = joint_roi_rows + roi_h + joint_roi_space_between_rows
+        driver_data_boxes = []
+        driver_data_boxes.append(latin_last_name_box)
+        driver_data_boxes.append(latin_first_name_box)
+        driver_data_boxes.append(birth_date_box)
+        driver_data_boxes.append(id_driving_licence_box)
 
-        joint_roi_rows += joint_roi_space_borders_paddings
-        joint_roi_cols = joint_roi_cols + 2*joint_roi_space_borders_paddings
-
-        joint_roi = np.zeros((joint_roi_rows, joint_roi_cols, 3), np.uint8)
-
-        insert_row_start = joint_roi_space_borders_paddings
-        insert_col_start = joint_roi_space_borders_paddings
-        for idx, roi in enumerate(roi_arr):
-            roi_w = roi.shape[1]
-            roi_h = roi.shape[0]
-            insert_col_end = insert_col_start + roi_w
-            insert_row_end = insert_row_start + roi_h
-
-            joint_roi[insert_row_start:insert_row_end, insert_col_start:insert_col_end] = roi
-            insert_row_start = insert_row_end + joint_roi_space_between_rows
-
-        return joint_roi
+        return driver_data_boxes
 
     @staticmethod
-    def _find_expiry_date_among_candidates(canditate_texts):
-        # convert texts to array by '\n' for easier further work
-        canditate_arr = canditate_texts.split('\n')
+    def _ocr_driver_data(processed_img, driver_data_boxes):
+        user_data = []
+        for box in driver_data_boxes:
+            x0 = box[1]
+            x1 = box[1] + box[3]
+            y0 = box[0]
+            y1 = box[0] + box[2]
+            img_roi = processed_img[x0:x1, y0:y1]
+            user_data.append(pytesseract.image_to_string(img_roi, config='--psm 8'))
 
-        # expiry date is:
-        # -- contains /
-        # todo there isn't any processing for case when there are several dates on the card
-        # it could be solve by comparing the dates and choosing the biggest one
-        expiry_date = ''
-        for candidate in canditate_arr:
-            if '/' in candidate:
-                expiry_date = candidate
-                break
-        return expiry_date
+        last_name = user_data[0]
+        first_name = user_data[1]
+        birth_date = user_data[2]
+        id_driving_licence = user_data[3]
+        return last_name, first_name, birth_date, id_driving_licence
 
 
 # ----------------------------------------------------
