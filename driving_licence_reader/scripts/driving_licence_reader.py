@@ -23,6 +23,7 @@ import cv2
 import imutils
 import re
 import pytesseract
+from operator import itemgetter, attrgetter
 
 # Nets
 from scripts.nets.mask_rcnn import MaskRCNN
@@ -159,7 +160,7 @@ class DrivingLicenceReader():
         # looking for document row number by size
         row_numbers = []
         image_c_1 = image.copy()
-        print(text_roi_arr[0])
+
         for text in text_roi_arr:
             aspect_ratio = text[2] / text[3]
             if aspect_ratio > 0.9 and aspect_ratio < 2:
@@ -203,27 +204,74 @@ class DrivingLicenceReader():
                 row_2_top = number[1]
                 print('row_2_top =', row_2_top)
             if text_number == '3.':
-                row_3_top = number[0]
+                row_3_top = number[1]
+                print('row_3_top =', row_3_top)
             # print(text_number)
             # cv2.imshow("Numbers", img_number)
             # cv2.waitKey(0)
             # cv2.destroyWindow("Numbers")
 
-        # last name lays between row_1_top and row_2_top
-        # and not far right (<100px) from numbers vertical line
+
+        # finding names roi
         img_c_2 = image_spec.copy()
+
+        latin_last_name_box = (0, 0, 0, 0)
+        latin_first_name_box = (0, 0, 0, 0)
+        first_name_pret = []
+        delta = 10  # take into account some error of text box positions
+
         for text in text_roi_arr:
             text_top_corner = text[1]
             text_left_corner = text[0]
-            # text_bottom_corner =
-            delta = 10
 
+            # finding last name
+            # last name lays between row_1_top and row_2_top
+            # and not far right (<100px) from numbers vertical line
+            # we need only latin name
+            # latin name is lower in the row
             if (text_top_corner + delta) > row_1_top and \
                (text_top_corner + delta) < row_2_top and \
                text_left_corner - numbers_vertical_line < 100 and \
-                    text_left_corner - numbers_vertical_line > 50:
-                cv2.rectangle(img_c_2, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1),
-                              (0, 255, 0), 1)
+               text_left_corner - numbers_vertical_line > 50 and \
+               text_top_corner > latin_last_name_box[1]:
+                latin_last_name_box = text
+
+            # finding first name
+            # first name lays between row_2_top and row_3_top
+            # and not far right (<100px) from numbers vertical line
+            # we need only latin name
+            # latin name is always on the 2nd substring of the first name section
+            if (text_top_corner + delta) > row_2_top and \
+               (text_top_corner + delta) < row_3_top and \
+                text_left_corner - numbers_vertical_line < 100 and \
+                text_left_corner - numbers_vertical_line > 50:
+                    first_name_pret.append(text)
+
+            # if(len(first_name_pret)) < 1:
+            #     print('[ERROR] First name have not been found.')
+
+        # getting second substrings by second value of y coordinate of top lef corner
+        # print('Pret before sort ', first_name_pret)
+        min_y_coordinate = min(x[1] for x in first_name_pret)
+        # print('min_v=', min_v)
+        first_name_pret = [x for x in first_name_pret if x[1] > min_y_coordinate]
+        # print('Pret after delete', first_name_pret)
+        first_name_pret = sorted(first_name_pret, key=itemgetter(1))
+        # print('Pret after sort', first_name_pret)
+        latin_first_name_box = first_name_pret[0]
+
+
+        cv2.rectangle(img_c_2, (latin_last_name_box[0], latin_last_name_box[1]),
+                      (latin_last_name_box[0] + latin_last_name_box[2] - 1, latin_last_name_box[1] + latin_last_name_box[3] - 1),
+                      (0, 255, 0), 1)
+        cv2.rectangle(img_c_2, (latin_first_name_box[0], latin_first_name_box[1]),
+                      (latin_first_name_box[0] + latin_first_name_box[2] - 1,
+                       latin_first_name_box[1] + latin_first_name_box[3] - 1),
+                      (0, 255, 0), 1)
+
+        # for p in first_name_pret:
+        #     cv2.rectangle(img_c_2, (p[0], p[1]), (p[0] + p[2] - 1, p[1] + p[3] - 1), (0, 255, 0), 1)
+
         cv2.imshow("Last name", img_c_2)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
