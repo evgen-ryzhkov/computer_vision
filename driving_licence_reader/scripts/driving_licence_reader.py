@@ -68,6 +68,8 @@ class DrivingLicenceReader():
         # cv2.imshow("Result", prepared_card_image)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
+
+        print('[INFO] Reading driver data ...')
         roi_box = input_image
 
         gray = cv2.cvtColor(roi_box, cv2.COLOR_BGR2GRAY)
@@ -88,9 +90,10 @@ class DrivingLicenceReader():
 
 
         useful_text_roi = self._get_usefull_text_roi(connected, roi_box)
-        last_name, first_name = self._get_name(useful_text_roi, gray)
+        last_name, first_name, birth_date, id_driving_licence = self._get_name(useful_text_roi, gray)
 
-        print('Name = {} {}'.format(last_name, first_name))
+        print('[OK] Driving licence has been read. Driver data:')
+        print('Name = {} {}\nBirth date = {}\nID driving licence = {}'.format(last_name, first_name, birth_date, id_driving_licence))
         # cv2.imshow("Theshold debugging", thres_2)
         # cv2.waitKey(0)
         #
@@ -144,7 +147,7 @@ class DrivingLicenceReader():
             w = w + 2*delta
             h = h + 2*delta
             if w > (20 + 2*delta) and h > (20 + 2*delta) and h < 70:
-                cv2.rectangle(image_c, (x, y), (x + w-1, y + h-1), (0, 255, 0), 1)
+                # cv2.rectangle(image_c, (x, y), (x + w-1, y + h-1), (0, 255, 0), 1)
                 useful_text_roi.append((x, y, w, h))
 
         # cv2.imshow("Text boxes", image_c)
@@ -171,113 +174,164 @@ class DrivingLicenceReader():
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
 
-        # looking for 1.
+        # looking for numbers by aspect ratio
+        # then by reading and filtering by values = '1.', '2.', '3.'
 
-        # image_spec = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,5,2)
-        # blur = cv2.GaussianBlur(image, (3, 3), 0)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
         blackhat = cv2.morphologyEx(image, cv2.MORPH_BLACKHAT, kernel)
+
+        # cv2.imshow("Numbers blackhat", blackhat)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
         _, image_spec = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         # cv2.imshow("Numbers thresh", image_spec)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
-        row_1_top = 0
-        row_2_top = 0
-        row_3_top = 0
+
+        # remove some noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        closed = cv2.morphologyEx(image_spec, cv2.MORPH_CLOSE, kernel)
+        # cv2.imshow("Numbers opened", closed)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
+        row_1_top, row_2_top, row_3_top, row_5_top = 0, 0, 0, 0
         numbers_vertical_line = 0
+
         for number in row_numbers:
             x0 = number[1]-5
             x1 = number[1] + number[3] + 5
             y0 = number[0]
             y1 = number[0] + number[2]
-            img_number = image_spec[x0:x1, y0:y1]
+            img_number = closed[x0:x1, y0:y1]
             text_number = pytesseract.image_to_string(img_number, config='-c tessedit_char_whitelist=1234567890 --psm 10')
             # sometimes tesseract read '.' as ','
             text_number = re.sub(r",", ".", text_number)
 
             if text_number == '1.':
                 row_1_top = number[1]
-                print('row_1_top =', row_1_top)
                 numbers_vertical_line = number[0]
-                print('vertical line =', numbers_vertical_line)
             if text_number == '2.':
                 row_2_top = number[1]
-                print('row_2_top =', row_2_top)
             if text_number == '3.':
                 row_3_top = number[1]
-                print('row_3_top =', row_3_top)
+            if text_number == '5.':
+                row_5_top = number[1]
             # print(text_number)
             # cv2.imshow("Numbers", img_number)
             # cv2.waitKey(0)
             # cv2.destroyWindow("Numbers")
 
+        if row_1_top == 0 or \
+            row_2_top == 0 or \
+            row_3_top == 0 or \
+            row_5_top == 0:
+            print('[INFO] Number rows have not been read.')
+            exit()
 
         # finding names roi
         img_c_2 = image_spec.copy()
 
-        latin_last_name_box = (0, 0, 0, 0)
-        latin_first_name_box = (0, 0, 0, 0)
-        first_name_pret = []
-        delta = 10  # take into account some error of text box positions
+        first_name_applicants = []
+        latin_last_name_box, birth_date_box, id_driving_licence_box = (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)
+        delta_row = 10  # take into account some error of text box positions
+        delta_v_line_low = 10
+        delta_v_line_high = 100
 
         for text in text_roi_arr:
             text_top_corner = text[1]
             text_left_corner = text[0]
+            text_left_corner_minus_v_line = text_left_corner - numbers_vertical_line
 
-            # finding last name
-            # last name lays between row_1_top and row_2_top
-            # and not far right (<100px) from numbers vertical line
-            # we need only latin name
-            # latin name is lower in the row
-            if (text_top_corner + delta) > row_1_top and \
-               (text_top_corner + delta) < row_2_top and \
-               text_left_corner - numbers_vertical_line < 100 and \
-               text_left_corner - numbers_vertical_line > 50 and \
-               text_top_corner > latin_last_name_box[1]:
-                latin_last_name_box = text
+            # all needed data are not far right (<100px) from numbers vertical line
+            if text_left_corner_minus_v_line < delta_v_line_high and \
+               text_left_corner_minus_v_line > delta_v_line_low:
 
-            # finding first name
-            # first name lays between row_2_top and row_3_top
-            # and not far right (<100px) from numbers vertical line
-            # we need only latin name
-            # latin name is always on the 2nd substring of the first name section
-            if (text_top_corner + delta) > row_2_top and \
-               (text_top_corner + delta) < row_3_top and \
-                text_left_corner - numbers_vertical_line < 100 and \
-                text_left_corner - numbers_vertical_line > 50:
-                    first_name_pret.append(text)
+                # finding last name
+                # last name lays between row_1_top and row_2_top
+                # we need only latin name
+                # latin name is lower in the row
+                if (text_top_corner + delta_row) > row_1_top and \
+                   (text_top_corner + delta_row) < row_2_top and \
+                   text_top_corner > latin_last_name_box[1]:
+                    latin_last_name_box = text
 
-            # if(len(first_name_pret)) < 1:
-            #     print('[ERROR] First name have not been found.')
+                # finding first name step 1 - getting applicants from 2nd rows
+                # first name lays between row_2_top and row_3_top
+                # we need only latin name
+                # latin name is always on the 2nd substring of the first name section
+                if (text_top_corner + delta_row) > row_2_top and \
+                   (text_top_corner + delta_row) < row_3_top:
+                    first_name_applicants.append(text)
 
+                # finding birth date
+                # it lays in 3rd row and nearby number of the row (3.)
+                if text_top_corner > (row_3_top - delta_row) and \
+                   text_top_corner < (row_3_top + delta_row):
+                    birth_date_box = text
+
+                # finding id driving licence
+                # it lays in 5rd row and nearby number of the row (5.)
+                if text_top_corner > (row_5_top - delta_row) and \
+                   text_top_corner < (row_5_top + delta_row):
+                    id_driving_licence_box = text
+
+
+        # getting first name step 2
         # getting second substrings by second value of y coordinate of top lef corner
-        # print('Pret before sort ', first_name_pret)
-        min_y_coordinate = min(x[1] for x in first_name_pret)
+        # print('Pret before sort ', first_name_applicants)
+        min_y_coordinate = min(x[1] for x in first_name_applicants)
         # print('min_v=', min_v)
-        first_name_pret = [x for x in first_name_pret if x[1] > min_y_coordinate]
+        first_name_applicants = [x for x in first_name_applicants if x[1] > min_y_coordinate]
         # print('Pret after delete', first_name_pret)
-        first_name_pret = sorted(first_name_pret, key=itemgetter(1))
+        first_name_applicants = sorted(first_name_applicants, key=itemgetter(1))
         # print('Pret after sort', first_name_pret)
-        latin_first_name_box = first_name_pret[0]
+        latin_first_name_box = first_name_applicants[0]
 
+        user_data_box = []
+        user_data_box.append(latin_last_name_box)
+        user_data_box.append(latin_first_name_box)
+        user_data_box.append(birth_date_box)
+        user_data_box.append(id_driving_licence_box)
 
-        cv2.rectangle(img_c_2, (latin_last_name_box[0], latin_last_name_box[1]),
-                      (latin_last_name_box[0] + latin_last_name_box[2] - 1, latin_last_name_box[1] + latin_last_name_box[3] - 1),
-                      (0, 255, 0), 1)
-        cv2.rectangle(img_c_2, (latin_first_name_box[0], latin_first_name_box[1]),
-                      (latin_first_name_box[0] + latin_first_name_box[2] - 1,
-                       latin_first_name_box[1] + latin_first_name_box[3] - 1),
-                      (0, 255, 0), 1)
+        user_data = []
+        for box in user_data_box:
+            x0 = box[1]
+            x1 = box[1] + box[3]
+            y0 = box[0]
+            y1 = box[0] + box[2]
+            img_roi = closed[x0:x1, y0:y1]
+            user_data.append(pytesseract.image_to_string(img_roi, config='--psm 8'))
+
+        # print(user_data)
+
+        # cv2.rectangle(closed, (latin_last_name_box[0], latin_last_name_box[1]),
+        #               (latin_last_name_box[0] + latin_last_name_box[2] - 1, latin_last_name_box[1] + latin_last_name_box[3] - 1),
+        #               (0, 255, 0), 1)
+        # cv2.rectangle(closed, (latin_first_name_box[0], latin_first_name_box[1]),
+        #               (latin_first_name_box[0] + latin_first_name_box[2] - 1,
+        #                latin_first_name_box[1] + latin_first_name_box[3] - 1),
+        #               (0, 255, 0), 1)
+        # cv2.rectangle(closed, (birth_date[0], birth_date[1]),
+        #               (birth_date[0] + birth_date[2] - 1, birth_date[1] + birth_date[3] - 1),
+        #               (0, 255, 0), 1)
+        # cv2.rectangle(closed, (id_driving_licence[0], id_driving_licence[1]),
+        #               (id_driving_licence[0] + id_driving_licence[2] - 1, id_driving_licence[1] + id_driving_licence[3] - 1),
+        #               (0, 255, 0), 1)
 
         # for p in first_name_pret:
         #     cv2.rectangle(img_c_2, (p[0], p[1]), (p[0] + p[2] - 1, p[1] + p[3] - 1), (0, 255, 0), 1)
 
-        cv2.imshow("Last name", img_c_2)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # cv2.imshow("Last name + first name + birth date + id licence", img_roi)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
 
-        first_name = '??'
-        return last_name, first_name
+        last_name = user_data[0]
+        first_name = user_data[1]
+        birth_date = user_data[2]
+        id_driving_licence = user_data[3]
+        return last_name, first_name, birth_date, id_driving_licence
 
     @staticmethod
     def _visualize_result(input_image, card_number, expiry_date):
