@@ -21,22 +21,17 @@ import numpy as np
 import cv2
 import imutils
 import re
-import pytesseract
 from operator import itemgetter
+import time
+from skimage.restoration import estimate_sigma
 
 # Nets
 from scripts.nets.mask_rcnn import MaskRCNN
+import pytesseract
 
 # Some addition utilities
 from scripts.utils.image_processing import ImageProcessing
 
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import cm
-from matplotlib import colors
-from matplotlib.colors import hsv_to_rgb
-
-import time
 
 class DrivingLicenceReader():
 
@@ -62,20 +57,26 @@ class DrivingLicenceReader():
         # print('[INFO] Card instance image processing for text reading...')
         # processed_roi_box = self._prepare_card_for_text_reading(input_image, instance_image, roi_box)
         #
-        # cv2.imshow("Result", prepared_card_image)
+        # cv2.imshow("Result", img_for_ocr)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
 
+
         print('[INFO] Reading driver data ...')
         # processed_roi_box, roi_box = input_image, input_image # todo remove after debugging
-        useful_text_rois = self._get_useful_text_roi(brg_img=img_for_processing)
+        useful_text_rois, closed = self._get_useful_text_roi(brg_img=img_for_processing)
 
         # scale text roi coordinates to img_for_ocr
         np_arr = np.array(useful_text_rois)
         scaled_text_roi_arr = np_arr * scale_size
         scaled_text_roi_arr = scaled_text_roi_arr.astype(int)
 
-
+        img_c = img_for_processing.copy()
+        for text in useful_text_rois:
+            cv2.rectangle(img_c, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
+        cv2.imshow("Result", img_c)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(useful_text_rois, img_for_processing)
         last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(scaled_text_roi_arr, img_for_ocr)
         # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data_alt(img_for_ocr, useful_text_rois, scale_size)
@@ -109,12 +110,12 @@ class DrivingLicenceReader():
             # cv2.waitKey(0)
             # cv2.destroyAllWindows()
             # debugging
-            img_for_ocr_h = 1600
+            img_for_ocr_h = 2400 # bigger resolution - better tesseract ocr
             img_for_processing_h = 960
             scale_size = img_for_ocr_h / img_for_processing_h
 
-            img_for_ocr = imutils.resize(input_image, height=1600)
-            img_for_processing = imutils.resize(input_image, height=960)
+            img_for_ocr = imutils.resize(input_image, height=img_for_ocr_h)
+            img_for_processing = imutils.resize(input_image, height=img_for_processing_h)
 
             # resized_image = input_image
             return img_for_ocr, img_for_processing, scale_size
@@ -129,16 +130,41 @@ class DrivingLicenceReader():
         # some processing
         gray = cv2.cvtColor(brg_img, cv2.COLOR_BGR2GRAY)
 
+        # cv2.imshow("Gray", gray)
+        # cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+        # remove some noise
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
         # -- lightning dark pieces (text is black)
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)) for 960
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 7)) #for 960
+        #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
 
         _, thresh = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
+        # cv2.imshow("Thresh", thresh)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
+        # remove some noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+        closed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+
+        # cv2.imshow("Closed", closed)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
         # -- for better searching of rectangular elements
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 1))
-        connected_tresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 1))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 5))
+        connected_tresh = cv2.morphologyEx(closed, cv2.MORPH_CLOSE, kernel)
+
+        # cv2.imshow("connected tresh", connected_tresh)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
 
         # getting contours
         all_contours, _ = cv2.findContours(connected_tresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -155,48 +181,26 @@ class DrivingLicenceReader():
             if w > (20 + 2*delta) and h > (20 + 2*delta) and h < 70:
                 useful_text_roi.append((x, y, w, h))
 
+
         end = time.time()
         print('Getting useful roi took {} sec'.format(end - start))
+
         # 0.0029 for img_h = 640
         # 0.00695 for img_h = 960
         # 0.159 for img_h = 1600
-        return useful_text_roi
-
-    def _get_driver_data_alt(self, img_for_ocr, text_roi_arr, scale_size):
-        img_c = img_for_ocr.copy()
-
-        # scale text roi coordinates to img_for_ocr
-        np_arr = np.array(text_roi_arr)
-        scaled_text_roi_arr = np_arr * scale_size
-        scaled_text_roi_arr = scaled_text_roi_arr.astype(int)
-
-        row_1_top, row_2_top, row_3_top, row_5_top, numbers_vertical_line \
-            = self._get_row_coordinates(scaled_text_roi_arr, img_for_ocr)
-
-        driver_data_boxes = self._get_driver_data_boxes(scaled_text_roi_arr, row_1_top, row_2_top, row_3_top, row_5_top,
-                                                        numbers_vertical_line)
-        last_name, first_name, birth_date, id_driving_licence = self._ocr_driver_data(img_for_ocr, driver_data_boxes)
-
-        # for text in scaled_text_roi_arr:
-        #     cv2.rectangle(img_c, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
-        # cv2.imshow("Useful text rois", img_c)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
-
-        return '1', '1', '1', '1'
-
+        return useful_text_roi, closed
 
     def _get_driver_data(self, text_roi_arr, brg_img):
 
         # for better OCR do some processing
         processed_img = self._get_processed_image_for_text_reading(brg_img)
 
-        print('Processed img shape = ', processed_img.shape)
+
+        # print('Processed img shape = ', processed_img.shape)
         # cv2.namedWindow("Processing for OCR", cv2.WINDOW_NORMAL)
-        cv2.imshow("Processing for OCR", processed_img)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # cv2.imshow("Processing for OCR", processed_img)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
 
         # useful data are located against row numbers and nearby them
         # so find document row numbers and save their coordinates
@@ -290,69 +294,85 @@ class DrivingLicenceReader():
     @staticmethod
     def _get_processed_image_for_text_reading(brg_img):
 
-        # brg_img = cv2.imread(main_config.TEST_IMAGES_DIR + 'text_11.jpg')
         gray = cv2.cvtColor(brg_img, cv2.COLOR_BGR2GRAY)
-        gray_inv = cv2.bitwise_not(gray)
-        cv2.imshow("Gray", gray_inv)
+        cv2.namedWindow('Gray', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Gray', 1280, 960)
+        cv2.imshow("Gray", gray)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17))
-        # tophat = cv2.morphologyEx(gray_inv, cv2.MORPH_TOPHAT, kernel)
-        #
-        # cv2.imshow("top hat", tophat)
+        # cv2.imshow("Gray", gray)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
-
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 19))
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        # blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
-        #
-        # cv2.imshow("blackhat", blackhat)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
-        # _, image_spec = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        # _, image_spec = cv2.threshold(gray, 130.0, 255.0, cv2.THRESH_BINARY)
-        _, image_spec = cv2.threshold(gray_inv, 150.0, 255.0, cv2.THRESH_BINARY_INV)
-        # image_spec = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-
-        cv2.imshow("Thresh", image_spec)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
 
         # remove some noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        closed = cv2.morphologyEx(image_spec, cv2.MORPH_CLOSE, kernel)
+        # gray = cv2.GaussianBlur(gray, (7, 7), 0)
+        sigma_est = estimate_sigma(gray, multichannel=False, average_sigmas=True)
+        if sigma_est > 3 and sigma_est < 7:
+            gray = cv2.medianBlur(gray, 5)
+        elif sigma_est >= 7:
+            gray = cv2.medianBlur(gray, 7)
+        else:
+            gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-        #
-        # cv2.imshow("closed", closed)
+        # cv2.namedWindow('gray', cv2.WINDOW_NORMAL)
+        # cv2.resizeWindow('gray', 1280, 960)
+        # cv2.imshow("gray", gray)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
 
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        # kernel = np.ones((3, 3), np.uint8)
-        # erosion = cv2.dilate(closed, kernel, iterations=1)
+        # -- lightning dark pieces (text is black)
+        # blackhat_kernel = (31, 31)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (39, 39))  # for 960
+        blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+        cv2.namedWindow('Black', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Black', 1280, 960)
+        cv2.imshow("Black", blackhat)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
-        # cv2.imshow("erosion", erosion)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
+        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, closing_kernel)
+        # # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
 
-        return closed
+
+        _, thresh = cv2.threshold(blackhat, 0.0, 255.0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        cv2.namedWindow('Thresh', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Thresh', 1280, 960)
+        cv2.imshow("Thresh", thresh)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+        kernel = np.ones((5, 5), np.uint8)
+        erosion = cv2.dilate(thresh, kernel, iterations=1)
+        cv2.namedWindow('Erosion', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Erosion', 1280, 960)
+        cv2.imshow("Erosion", erosion)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+
+        # closed = thresh
+        # remove some noise
+
+
+        return erosion
 
     @staticmethod
     def _get_row_coordinates(text_roi_arr, processed_img):
 
         # first find roi are similar row numbers
         row_numbers = []
-        # image_c_1 = brg_img.copy()
+        # image_c_1 = processed_img.copy()
 
         for text in text_roi_arr:
             aspect_ratio = text[2] / text[3]
             if aspect_ratio > 0.9 and aspect_ratio < 2:
                 row_numbers.append(text)
                 # cv2.rectangle(image_c_1, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
+
+        # cv2.imshow("Row numbers", image_c_1)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
 
         row_1_top, row_2_top, row_3_top, row_5_top = 0, 0, 0, 0
         numbers_vertical_line = 0
@@ -366,7 +386,9 @@ class DrivingLicenceReader():
             text_number = pytesseract.image_to_string(img_number,
                                                       config='-c tessedit_char_whitelist=1234567890 --psm 10')
 
-            # print(text_number)
+            # cv2.imshow("Row numbers", img_number)
+            # cv2.waitKey(0)
+            print(text_number)
             # sometimes tesseract read '.' as ','
             text_number = re.sub(r",", ".", text_number)
 
@@ -375,18 +397,23 @@ class DrivingLicenceReader():
                 numbers_vertical_line = number[0]
             if text_number == '2.':
                 row_2_top = number[1]
+                # if '1.' has not been recognized
+                # define number vertical lines by '2.'
+                numbers_vertical_line = number[0]
             if text_number == '3.':
                 row_3_top = number[1]
             if text_number == '5.':
                 row_5_top = number[1]
 
-        if row_1_top == 0 or \
-                row_2_top == 0 or \
-                row_3_top == 0 or \
-                row_5_top == 0:
-            print('[INFO] Number rows have not been read.')
-            exit()
 
+
+
+        # if row_1_top == 0 or \
+        #         row_2_top == 0 or \
+        #         row_3_top == 0 or \
+        #         row_5_top == 0:
+        #     print('[INFO] Number rows have not been read.')
+        #     exit()
         return row_1_top, row_2_top, row_3_top, row_5_top, numbers_vertical_line
 
     @staticmethod
@@ -394,10 +421,10 @@ class DrivingLicenceReader():
         # img_c_2 = brg_img.copy()
 
         first_name_applicants = []
-        latin_last_name_box, birth_date_box, id_driving_licence_box = (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)
+        latin_last_name_box, birth_date_box, id_driving_licence_box = np.zeros(3, dtype=int), np.zeros(3, dtype=int), np.zeros(3, dtype=int)
         delta_row = 20  # take into account some error of text box positions
         delta_v_line_low = 10
-        delta_v_line_high = 150
+        delta_v_line_high = 250 # todo - hard code, it should change on dependence value from scale factor (100 * scale)
 
         for text in text_roi_arr:
             text_top_corner = text[1]
@@ -440,13 +467,16 @@ class DrivingLicenceReader():
         # getting first name step 2
         # getting second substrings by second value of y coordinate of top lef corner
         # print('Pret before sort ', first_name_applicants)
-        min_y_coordinate = min(x[1] for x in first_name_applicants)
-        # print('min_v=', min_v)
-        first_name_applicants = [x for x in first_name_applicants if x[1] > min_y_coordinate]
-        # print('Pret after delete', first_name_pret)
-        first_name_applicants = sorted(first_name_applicants, key=itemgetter(1))
-        # print('Pret after sort', first_name_pret)
-        latin_first_name_box = first_name_applicants[0]
+        if len(first_name_applicants) == 0:
+            latin_first_name_box = np.zeros(3, dtype=int)
+        else:
+            min_y_coordinate = min(x[1] for x in first_name_applicants)
+            # print('min_v=', min_v)
+            first_name_applicants = [x for x in first_name_applicants if x[1] > min_y_coordinate]
+            # print('Pret after delete', first_name_pret)
+            first_name_applicants = sorted(first_name_applicants, key=itemgetter(1))
+            # print('Pret after sort', first_name_pret)
+            latin_first_name_box = first_name_applicants[0]
 
         driver_data_boxes = []
         driver_data_boxes.append(latin_last_name_box)
@@ -460,15 +490,23 @@ class DrivingLicenceReader():
     def _ocr_driver_data(processed_img, driver_data_boxes):
         user_data = []
         for box in driver_data_boxes:
-            x0 = box[1]
-            x1 = box[1] + box[3]
-            y0 = box[0]
-            y1 = box[0] + box[2]
-            img_roi = processed_img[x0:x1, y0:y1]
-            # cv2.imshow('Number ', img_roi)
-            # cv2.waitKey(0)
-            # cv2.destroyAllWindows()
-            user_data.append(pytesseract.image_to_string(img_roi, config='--psm 8'))
+            if not np.any(box):
+                user_data.append('Not defined')
+            else:
+                x0 = box[1]
+                x1 = box[1] + box[3]
+                y0 = box[0]
+                y1 = box[0] + box[2]
+                img_roi = processed_img[x0:x1, y0:y1]
+
+                # img_roi = imutils.resize(img_roi, height=300)
+                # kernel = np.ones((13, 13), np.uint8)
+                # img_roi = cv2.dilate(img_roi, kernel, iterations=1)
+
+                # cv2.imshow('Number ', img_roi)
+                # cv2.waitKey(0)
+                # cv2.destroyAllWindows()
+                user_data.append(pytesseract.image_to_string(img_roi, config='--psm 8'))
 
         last_name = user_data[0]
         first_name = user_data[1]
