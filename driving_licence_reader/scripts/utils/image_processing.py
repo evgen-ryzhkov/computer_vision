@@ -9,7 +9,6 @@ Functions:
 """
 
 import cv2
-import imutils
 import numpy as np
 import base64
 
@@ -18,30 +17,15 @@ class ImageProcessing:
 
     def get_birds_eye_view_roi(self, instance_image, original_roi_box, scale_size):
         # algorithm:
-        #   0. resize image to smaller size for better perfomance
         #   1. find the biggest contour
         #   2. find 4 vertices
         #   3. perspective transform image by 4 vertices
 
-        # for increase work speed
-        # maybe it will need to turn on
-        # ratio = instance_image.shape[0] / 300.0
-        # resized_image = imutils.resize(instance_image, height=960)
         # -----Converting image to LAB Color model-----------------------------------
         lab = cv2.cvtColor(instance_image, cv2.COLOR_BGR2LAB)
-        # lab = cv2.cvtColor(roi_box, cv2.COLOR_BGR2LAB)
-
-        # cv2.imshow("lab", lab)
-        # cv2.waitKey(0)
 
         # -----Splitting the LAB image to different channels-------------------------
         l, a, b = cv2.split(lab)
-        # cv2.imshow('l_channel', l)
-        # cv2.waitKey(0)
-        # cv2.imshow('a_channel', a)
-        # cv2.waitKey(0)
-        # cv2.imshow('b_channel', b)
-        # cv2.waitKey(0)
 
         # -----Applying CLAHE to L-channel-------------------------------------------
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
