@@ -1,6 +1,11 @@
 """
-Credit card reader
-Reading card number and expiry date in weak controlled space (card form, color, position).
+Driving license reader
+
+Input:
+    - Photo of driving license (it could be holding by hand)
+Output:
+    - Scan of the document: must to have rather pretty view (approximately like  it usually have scanned document view)
+    - Text data: First, Last Names (Latin letters), Birth date, driving license ID number.
 
 Written by Evgeniy Ryzhkov
 Work based on work "Splash of Color" by Mattersport, Inc.
@@ -33,25 +38,159 @@ import pytesseract
 from scripts.utils.image_processing import ImageProcessing
 
 
-class DrivingLicenceReader():
+class DrivingLicenceReader:
 
     def __init__(self):
         self.image_pros = ImageProcessing()
 
     def read_card(self):
         print('[INFO] Loading input image...')
-        img_for_ocr, img_for_processing, scale_size = self._get_input_image()
+        input_img = self._get_input_image()
 
+        print('[INFO] Getting scanned view of driving license...')
+        scanned_view_img = self._get_driving_licence_object(input_img)
+        cv2.imshow("Scanned_view_img", scanned_view_img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        print(scanned_view_img.shape)
+
+        print('[INFO] Reading driver data...')
+        # last_name, first_name, birth_date, id_driving_licence =\
+        #     self._get_driver_data(input_img, instance_original_image, roi_box, img_for_object_detection_h)
+        # print('[OK] Driving licence has been read. Driver data:')
+        # print('Name = {} {}\nBirth date = {}\nID driving licence = {}'.format(last_name, first_name, birth_date, id_driving_licence))
+
+    @staticmethod
+    def _get_command_line_arguments():
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--image", required=True,
+                        help="File name from images/test/")
+        args = vars(ap.parse_args())
+        return args
+
+    def _get_input_image(self):
+        user_arguments = self._get_command_line_arguments()
+        img_file = user_arguments['image']
+        try:
+            return cv2.imread(main_config.TEST_IMAGES_DIR + img_file)
+        except FileNotFoundError:
+            print('[ERROR] Image file has not been found.')
+            raise
+        except IOError:
+            print('[ERROR] Image file can not been read.')
+            raise
+        except Exception as e:
+            print('[ERROR] Unhandled exception. ', e)
+            raise
+
+    # ----- getting object --------------
+    def _get_driving_licence_object(self, brg_img):
+        print('-- [INFO] Processing image for object detection...')
+        processed_img_for_obj_detection = self._get_processed_image_for_object_detection(brg_img)
+
+        print('-- [INFO] Getting object instance and ROI box...')
+        instance_image, roi_box = self._get_object(processed_img_for_obj_detection)
+
+        if len(instance_image) == 0:
+            print('[INFO] Driving licence has not been found.')
+            exit()
+        else:
+            scanned_view_imaged = self._get_scanned_view_image(instance_image, roi_box, brg_img, processed_img_for_obj_detection)
+            return scanned_view_imaged
+
+    @staticmethod
+    def _get_processed_image_for_object_detection(brg_img):
+        # decrease time for object detection
+        processed_img_h = 960
+        processed_img = imutils.resize(brg_img, height=processed_img_h)
+        return processed_img
+
+    @staticmethod
+    def _get_object(processed_brg_img):
+        mask_rcnn = MaskRCNN()
+        instance_image, roi_box = mask_rcnn.get_object_instance(image=processed_brg_img)
+        return instance_image, roi_box
+
+    @staticmethod
+    def _get_original_roi_box(original_img, small_roi_box, scale_size):
+        original_roi_box = (small_roi_box * scale_size).astype(int)
+        original_roi_img = original_img[original_roi_box[0]:original_roi_box[2], original_roi_box[1]:original_roi_box[3]]
+        return original_roi_img
+
+    @staticmethod
+    def _get_scale_size(original_img, processed_img):
+        original_img_h = original_img.shape[0]
+        processed_img_h = processed_img.shape[0]
+        return original_img_h / processed_img_h
+
+    def _get_scanned_view_image(self, instance_image, roi_box, original_img, processed_img):
+        # scanned img get from input img because for OCR needs high resolution image
+        scale_size = self._get_scale_size(original_img, processed_img)
+        original_roi_img = self._get_original_roi_box(original_img, roi_box, scale_size)
+
+        # for getting perspective transform_matrix, use instance_image because it's easier
+        # to define vertices of the document
+        # then, apply transform_matrix to rotate roi_box to get "scanned view"
+        scanned_view = self.image_pros.get_birds_eye_view_roi(instance_image=instance_image, original_roi_box=original_roi_img, scale_size=scale_size)
+        return scanned_view
+
+    # ----- /getting object --------------
+
+    # ----- reading driver data --------------
+    def _get_driver_data(self, input_brg_img, instance_image, roi_box, img_for_object_detection_h):
+        print('-- [INFO] Processing image for getting useful ROIs..')
+        processed_img_for_ocr = self._get_processed_img_for_ocr(instance_image, input_brg_img, img_for_object_detection_h)
+        last_name, first_name, birth_date, id_driving_licence = '', '', '', ''
+        return last_name, first_name, birth_date, id_driving_licence
+
+
+    def _get_processed_img_for_ocr(self, instance_brg_img, brg_img, img_for_object_detection_h):
+        # resize img for better OCR
+        # resized_brg_img, scale_size = self._resize_img(brg_img, img_for_object_detection_h)
+        # bird_eye_view_img = self._get_bird_eye_view_img(resized_brg_img)
+        bird_eye_view_instance = self.image_pros.get_birds_eye_view_roi(full_image='', image=instance_brg_img, roi_box='')
+        cv2.imshow("Bird eye view", bird_eye_view_instance)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        print(bird_eye_view_instance.shape)
+
+        return ''
+
+
+    @staticmethod
+    def _resize_img(img, img_for_object_detection_h):
+        img_for_ocr_h = 2400
+        scale_size = img_for_ocr_h / img_for_object_detection_h
+        resized_img = imutils.resize(img, height=img_for_ocr_h)
+        return resized_img, scale_size
+
+    def _get_bird_eye_view_img(self, resized_brg_img):
+        return resized_brg_img
+
+
+
+class DrivingLicenceReader_old():
+
+    def __init__(self):
+        self.image_pros = ImageProcessing()
+
+    def read_card(self):
+        print('[INFO] Loading input image...')
+        # img_for_ocr, img_for_processing, scale_size = self._get_input_image()
+        input_img = self._get_input_image()
+
+        print('[INFO] Preprocessing for getting instance ...')
+        processed_img_for_obj_detection = self._get_processed_image_for_object_detection(input_img)
         # print('[INFO] Getting driving licence instance ...')
-        # mask_rcnn = MaskRCNN()
-        # instance_image, roi_box = mask_rcnn.get_object_instance(image=input_image)
-        # if len(instance_image) == 0:
-        #     print('[INFO] Driving licence has not been found.')
-        #     exit()
+        mask_rcnn = MaskRCNN()
+        instance_image, roi_box = mask_rcnn.get_object_instance(image=processed_img_for_obj_detection)
+        if len(instance_image) == 0:
+            print('[INFO] Driving licence has not been found.')
+            exit()
 
-        # cv2.imshow("Roi box", roi_box)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
+        cv2.imshow("Roi box", roi_box)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
         # todo going to try to regulate card position by the interface
         # print('[INFO] Card instance image processing for text reading...')
@@ -62,27 +201,27 @@ class DrivingLicenceReader():
         # cv2.destroyAllWindows()
 
 
-        print('[INFO] Reading driver data ...')
-        # processed_roi_box, roi_box = input_image, input_image # todo remove after debugging
-        useful_text_rois, closed = self._get_useful_text_roi(brg_img=img_for_processing)
-
-        # scale text roi coordinates to img_for_ocr
-        np_arr = np.array(useful_text_rois)
-        scaled_text_roi_arr = np_arr * scale_size
-        scaled_text_roi_arr = scaled_text_roi_arr.astype(int)
-
-        img_c = img_for_processing.copy()
-        for text in useful_text_rois:
-            cv2.rectangle(img_c, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
-        cv2.imshow("Result", img_c)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(useful_text_rois, img_for_processing)
-        last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(scaled_text_roi_arr, img_for_ocr)
-        # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data_alt(img_for_ocr, useful_text_rois, scale_size)
-
-        print('[OK] Driving licence has been read. Driver data:')
-        print('Name = {} {}\nBirth date = {}\nID driving licence = {}'.format(last_name, first_name, birth_date, id_driving_licence))
+        # print('[INFO] Reading driver data ...')
+        # # processed_roi_box, roi_box = input_image, input_image # todo remove after debugging
+        # useful_text_rois, closed = self._get_useful_text_roi(brg_img=img_for_processing)
+        #
+        # # scale text roi coordinates to img_for_ocr
+        # np_arr = np.array(useful_text_rois)
+        # scaled_text_roi_arr = np_arr * scale_size
+        # scaled_text_roi_arr = scaled_text_roi_arr.astype(int)
+        #
+        # img_c = img_for_processing.copy()
+        # for text in useful_text_rois:
+        #     cv2.rectangle(img_c, (text[0], text[1]), (text[0] + text[2] - 1, text[1] + text[3] - 1), (0, 255, 0), 1)
+        # cv2.imshow("Result", img_c)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        # # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(useful_text_rois, img_for_processing)
+        # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data(scaled_text_roi_arr, img_for_ocr)
+        # # last_name, first_name, birth_date, id_driving_licence = self._get_driver_data_alt(img_for_ocr, useful_text_rois, scale_size)
+        #
+        # print('[OK] Driving licence has been read. Driver data:')
+        # print('Name = {} {}\nBirth date = {}\nID driving licence = {}'.format(last_name, first_name, birth_date, id_driving_licence))
 
     @staticmethod
     def _get_command_line_arguments():
@@ -99,17 +238,6 @@ class DrivingLicenceReader():
         try:
             input_image = cv2.imread(main_config.TEST_IMAGES_DIR + img_file)
 
-            # debugging
-            # img_h, img_w, _ = input_image.shape
-            # scale_size = img_height / img_h
-            # print('scale_size =', scale_size)
-            # new_img_w = int(img_w * scale_size)
-            # new_img_h = int(img_h * scale_size)
-            # resized_image = cv2.resize(input_image, (new_img_w, new_img_h), interpolation=cv2.INTER_AREA)
-            # cv2.imshow("Result", resized_image)
-            # cv2.waitKey(0)
-            # cv2.destroyAllWindows()
-            # debugging
             img_for_ocr_h = 2400 # bigger resolution - better tesseract ocr
             img_for_processing_h = 960
             scale_size = img_for_ocr_h / img_for_processing_h
@@ -120,8 +248,13 @@ class DrivingLicenceReader():
             # resized_image = input_image
             return img_for_ocr, img_for_processing, scale_size
         except:
-            print('[ERROR] Image file not found or can not be read.')
+            print('[ERROR] Image file has not been found or can not be read.')
             exit()
+
+    @staticmethod
+    def _get_processed_image_for_object_detection(brg_img):
+        h_obj_detection_img = 960
+
 
     @staticmethod
     def _get_useful_text_roi(brg_img):
