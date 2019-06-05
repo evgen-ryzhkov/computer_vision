@@ -2,6 +2,9 @@
 
 
 ### Projects:
+- driving license reader
+    - Scanning Ukrainian driving licence by the camera and recognizing First / Last Name, Birth year, Document ID.
+    - Tags: Instance Segmentation, Mark R-CNN, Text Detection, Optical Character Recognition, Tesseract.
 - credit card number and expiry date reader
     - Reading card data in weak controlled conditions (card form, color, position, etc.).
     - Tags: Instance Segmentation, Mark R-CNN, Text Detection, EAST, Optical Character Recognition, Google Vision API. 
