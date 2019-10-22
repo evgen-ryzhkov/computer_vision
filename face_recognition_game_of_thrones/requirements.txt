@@ -15,7 +15,7 @@ idna==2.8                 # via requests
 imutils==0.5.2
 numpy==1.16.1             # via face-recognition, opencv-python
 opencv-python==4.0.0.21
-pillow==5.4.1             # via face-recognition
+pillow==6.2.0             # via face-recognition
 pip-tools==3.3.2
 requests==2.21.0
 six==1.12.0               # via pip-tools
